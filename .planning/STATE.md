@@ -31,11 +31,13 @@ Deliver a minimal end-to-end async workflow:
 - job domain model and status constants implemented
 - Postgres jobs repository implemented (`Create`, `GetByID`, guarded transitions)
 - migration smoke test and repository integration tests added
+- HTTP jobs handlers implemented for `POST /jobs` and `GET /jobs/{id}`
+- basic router wiring added for jobs endpoints with method guards
+- HTTP handler tests added for `POST /jobs` success and `GET /jobs/{id}` not-found behavior
 
 ## Next milestone
 First successful end-to-end job lifecycle in local Docker environment
 
 ## Risks / open questions
 - Redis queue pattern for MVP
-- job status transition rules
 - duplicate processing protection approach
