@@ -27,6 +27,10 @@ Deliver a minimal end-to-end async workflow:
 ## Done
 - repository initialized
 - planning structure created
+- jobs table migration added (`up`/`down`)
+- job domain model and status constants implemented
+- Postgres jobs repository implemented (`Create`, `GetByID`, guarded transitions)
+- migration smoke test and repository integration tests added
 
 ## Next milestone
 First successful end-to-end job lifecycle in local Docker environment
