@@ -34,6 +34,8 @@ Deliver a minimal end-to-end async workflow:
 - HTTP jobs handlers implemented for `POST /jobs` and `GET /jobs/{id}`
 - basic router wiring added for jobs endpoints with method guards
 - HTTP handler tests added for `POST /jobs` success and `GET /jobs/{id}` not-found behavior
+- queue contract added (`Queue` interface with `Enqueue`/`Dequeue` and `Message{job_id}`)
+- Redis queue adapter added with blocking dequeue and UUID parsing
 
 ## Next milestone
 First successful end-to-end job lifecycle in local Docker environment

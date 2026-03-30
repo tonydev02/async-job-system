@@ -17,6 +17,13 @@
 - added HTTP handler tests:
   - `POST /jobs` success response shape and status
   - `GET /jobs/{id}` not-found mapping (`sql.ErrNoRows` -> `404`)
+- added queue abstraction:
+  - `queue.Queue` interface with `Enqueue` and `Dequeue`
+  - shared queue message model carrying `job_id` as UUID
+- added Redis queue adapter:
+  - enqueue via Redis list push
+  - blocking dequeue with empty-queue sentinel mapping
+  - UUID parsing/validation for dequeued messages
 
 ## Key decisions made
 - Postgres is source of truth
@@ -27,7 +34,9 @@
 - explicit state-machine transitions in repository methods make duplicate delivery behavior easier to reason about
 - integration tests can validate DB behavior without introducing HTTP/worker complexity
 - mapping domain models to explicit API response structs helps keep HTTP contract stable
+- introducing a queue interface before wiring API/worker keeps Redis details isolated and improves testability
 
 ## Follow-up work
-- add Redis enqueue/dequeue flow and worker processing loop
+- wire API job submission to enqueue `job_id` after DB create
+- add worker processing loop that dequeues from Redis and applies state transitions
 - implement retry/visibility-timeout/dead-letter behavior in later phases
