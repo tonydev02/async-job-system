@@ -18,6 +18,9 @@ type Repository struct {
 }
 
 func NewRepository(db *sql.DB) *Repository {
+	if db == nil {
+		panic("database connection is required")
+	}
 	return &Repository{db: db}
 }
 
