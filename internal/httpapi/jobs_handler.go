@@ -10,10 +10,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/namta/async-job-system/internal/jobs"
+	"github.com/namta/async-job-system/internal/queue"
 )
 
 type JobsHandler struct {
-	repo jobs.Repository
+	repo  jobs.Repository
+	queue queue.Queue
 }
 
 type createJobRequest struct {
@@ -40,8 +42,8 @@ type getJobResponse struct {
 	CompletedAt *string         `json:"completed_at"`
 }
 
-func NewJobsHandler(repo jobs.Repository) *JobsHandler {
-	return &JobsHandler{repo: repo}
+func NewJobsHandler(repo jobs.Repository, q queue.Queue) *JobsHandler {
+	return &JobsHandler{repo: repo, queue: q}
 }
 
 func (h *JobsHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
@@ -59,6 +61,11 @@ func (h *JobsHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	job, err := h.repo.Create(r.Context(), jobs.CreateParams{Payload: req.Payload})
 	if err != nil {
 		http.Error(w, "failed to create job", http.StatusInternalServerError)
+		return
+	}
+
+	if err := h.queue.Enqueue(r.Context(), queue.Message{JobID: job.ID}); err != nil {
+		http.Error(w, "failed to enqueue job", http.StatusServiceUnavailable)
 		return
 	}
 
