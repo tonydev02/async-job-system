@@ -43,6 +43,12 @@ type getJobResponse struct {
 }
 
 func NewJobsHandler(repo jobs.Repository, q queue.Queue) *JobsHandler {
+	if repo == nil {
+		panic("jobs repository is required")
+	}
+	if q == nil {
+		panic("queue is required")
+	}
 	return &JobsHandler{repo: repo, queue: q}
 }
 
