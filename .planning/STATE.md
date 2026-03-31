@@ -25,17 +25,15 @@ Deliver a minimal end-to-end async workflow:
 - dashboard UI
 
 ## Done
-- repository initialized
-- planning structure created
-- jobs table migration added (`up`/`down`)
-- job domain model and status constants implemented
-- Postgres jobs repository implemented (`Create`, `GetByID`, guarded transitions)
-- migration smoke test and repository integration tests added
-- HTTP jobs handlers implemented for `POST /jobs` and `GET /jobs/{id}`
-- basic router wiring added for jobs endpoints with method guards
-- HTTP handler tests added for `POST /jobs` success and `GET /jobs/{id}` not-found behavior
-- queue contract added (`Queue` interface with `Enqueue`/`Dequeue` and `Message{job_id}`)
-- Redis queue adapter added with blocking dequeue and UUID parsing
+- foundation: repository initialized and planning structure established
+- schema/domain: `jobs` migration (`up`/`down`) and job status model added
+- persistence: Postgres repository implemented with guarded transitions (`Create`, `GetByID`, `MarkProcessing`, `MarkCompleted`, `MarkFailed`)
+- persistence validation: migration smoke and repository integration tests added
+- HTTP API: `POST /jobs` + `GET /jobs/{id}` handlers and router method guards implemented
+- Step 3 completion: `POST /jobs` now persists in Postgres, then enqueues `job_id` through `queue.Queue`
+- queueing: queue contract and Redis adapter added (blocking dequeue + UUID parsing)
+- API validation: handler tests cover submit success, enqueue failure (`503`), and not-found mapping
+- safety: constructor dependency guards added for HTTP handler and Postgres repository
 
 ## Next milestone
 First successful end-to-end job lifecycle in local Docker environment

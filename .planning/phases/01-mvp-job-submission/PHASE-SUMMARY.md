@@ -1,29 +1,14 @@
 # PHASE-SUMMARY.md
 
 ## What was completed
-- added versioned SQL migration for `jobs` table (`up` and `down`)
-- modeled job domain types and status constants
-- implemented Postgres jobs repository with explicit guarded transitions:
-  - `Create`
-  - `GetByID`
-  - `MarkProcessing` (`pending -> processing`)
-  - `MarkCompleted` (`processing -> completed`)
-  - `MarkFailed` (`processing -> failed`)
-- added migration smoke test and repository integration tests (gated by `TEST_DATABASE_URL`)
-- added HTTP API handlers for:
-  - `POST /jobs` (decode payload, create job, return `202` with `job_id`)
-  - `GET /jobs/{id}` (UUID validation, fetch by ID, map `404` for missing jobs)
-- added router wiring for `/jobs` and `/jobs/{id}` with explicit method checks
-- added HTTP handler tests:
-  - `POST /jobs` success response shape and status
-  - `GET /jobs/{id}` not-found mapping (`sql.ErrNoRows` -> `404`)
-- added queue abstraction:
-  - `queue.Queue` interface with `Enqueue` and `Dequeue`
-  - shared queue message model carrying `job_id` as UUID
-- added Redis queue adapter:
-  - enqueue via Redis list push
-  - blocking dequeue with empty-queue sentinel mapping
-  - UUID parsing/validation for dequeued messages
+- migrations: versioned `jobs` table schema (`up`/`down`)
+- domain/repository: job statuses, Postgres repository, and guarded transitions (`pending -> processing -> completed|failed`)
+- persistence tests: migration smoke + repository integration tests (gated by `TEST_DATABASE_URL`)
+- HTTP API: `POST /jobs` and `GET /jobs/{id}` handlers with method guards, validation, and `404` mapping for missing jobs
+- queue contract: `queue.Queue` with `Message{job_id}` UUID payload
+- Redis adapter: enqueue/dequeue wiring with blocking pop, empty-queue sentinel mapping, and UUID parse checks
+- Step 3 wiring: `POST /jobs` now creates in DB then enqueues `job_id` to Redis through `queue.Queue`
+- API tests: enqueue success path verification, enqueue failure (`503`) behavior, and constructor dependency guards
 
 ## Key decisions made
 - Postgres is source of truth
@@ -37,6 +22,5 @@
 - introducing a queue interface before wiring API/worker keeps Redis details isolated and improves testability
 
 ## Follow-up work
-- wire API job submission to enqueue `job_id` after DB create
 - add worker processing loop that dequeues from Redis and applies state transitions
 - implement retry/visibility-timeout/dead-letter behavior in later phases
