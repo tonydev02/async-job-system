@@ -11,6 +11,9 @@
 - API tests: enqueue success path verification, enqueue failure (`503`) behavior, and constructor dependency guards
 - Step 4 worker: `internal/worker` added with dequeue loop, guarded claim (`MarkProcessing`), terminal transitions (`MarkCompleted`/`MarkFailed`), and deterministic processor
 - worker tests: behavior coverage for duplicate-safe skip, success completion, processor failure, queue empty + cancel exit, and processor cancellation
+- Step 5 runtime wiring: runnable worker executable (`cmd/worker/main.go`) added with startup config loading, dependency construction, startup DB/Redis ping checks, and signal-aware shutdown
+- Step 5 config: new `internal/config` package added for typed worker env parsing and local runtime defaults
+- Step 5 queue bootstrap: Redis adapter now includes explicit client constructor with startup ping
 
 ## Key decisions made
 - Postgres is source of truth
@@ -24,8 +27,8 @@
 - introducing a queue interface before wiring API/worker keeps Redis details isolated and improves testability
 - worker loop should treat empty queue as expected idle state while still honoring context cancellation
 - transition booleans from repository methods are important correctness signals and should not be ignored
+- worker executable startup should fail fast when infrastructure connectivity is unavailable
 
 ## Follow-up work
-- wire runnable worker entrypoint (`cmd/worker/main.go`) and service-level configuration for local run
 - execute manual Docker Compose end-to-end UAT and capture evidence
 - implement retry/visibility-timeout/dead-letter behavior in later phases

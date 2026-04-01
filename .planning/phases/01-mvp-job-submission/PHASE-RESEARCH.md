@@ -78,3 +78,8 @@ Shutdown flow:
 4. exit with non-zero status on startup/wiring failures
 
 This keeps local behavior predictable and production-shaped while preserving clear lifecycle ownership.
+
+### Step 5 implementation notes
+- worker process now runs from a dedicated executable (`cmd/worker/main.go`) rather than package-only wiring
+- startup dependencies are validated eagerly (Postgres ping + Redis ping) to fail fast on local misconfiguration
+- shutdown timeout is applied as a bounded wait during signal-driven termination, avoiding fixed-lifetime worker behavior

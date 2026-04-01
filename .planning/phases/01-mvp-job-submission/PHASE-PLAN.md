@@ -72,3 +72,15 @@ API → DB → Redis → Worker → DB → Polling API
 - add service-level worker config loader for local runs (DB/Redis/runtime settings)
 - wire dependency construction (Postgres repository, Redis queue adapter, deterministic processor, logger)
 - add signal-aware graceful shutdown path for local process execution
+
+## Step 5 completion
+- implemented worker runtime entrypoint in `cmd/worker/main.go` with:
+  - startup config load + validation
+  - signal-aware process lifecycle (`SIGINT`, `SIGTERM`)
+  - Postgres and Redis startup connectivity checks
+  - explicit dependency wiring into `worker.NewWorker`
+- implemented `internal/config` worker config loader with typed env parsing:
+  - required `DATABASE_URL`
+  - Redis settings (`REDIS_ADDR`, `REDIS_PASSWORD`, `REDIS_DB`, `REDIS_QUEUE_KEY`, `REDIS_BLOCK_TIMEOUT`)
+  - runtime settings (`WORKER_SHUTDOWN_TIMEOUT`, `LOG_LEVEL`)
+- extended Redis adapter with `NewRedisClient` startup constructor + `Ping` verification

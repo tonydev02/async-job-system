@@ -36,10 +36,11 @@ Deliver a minimal end-to-end async workflow:
 - safety: constructor dependency guards added for HTTP handler and Postgres repository
 - Step 4 completion: worker package implemented with dequeue loop, claim-then-process flow, and explicit terminal transitions
 - worker validation: unit tests added for duplicate-safe skip, success completion, processor failure, queue-empty cancellation, and processor context cancellation
+- Step 5 completion: runnable worker entrypoint added at `cmd/worker/main.go` with service-level config loading, dependency wiring, startup connectivity checks, and signal-aware shutdown handling
+- Step 5 validation: worker entrypoint builds through `go test ./...`; Redis client bootstrap moved to explicit constructor with startup ping
 
 ## Next milestone
 Manual Docker Compose end-to-end validation and phase close-out
 
 ## Risks / open questions
-- runnable service entrypoint for worker process (`cmd/worker/main.go`) not added yet
 - manual local E2E evidence still outstanding

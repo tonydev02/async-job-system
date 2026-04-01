@@ -32,3 +32,8 @@ Verify the MVP async flow end-to-end in local development.
 
 ## Remaining manual verification
 - [ ] run full API + Redis + Postgres + worker with Docker Compose and capture end-to-end evidence
+
+## Step 5 verification status
+- [x] worker executable compiles via `go test ./...` (`cmd/worker` package)
+- [x] worker runtime has startup config parsing and connectivity checks for Postgres/Redis
+- [ ] capture manual local run evidence for signal-driven shutdown behavior
