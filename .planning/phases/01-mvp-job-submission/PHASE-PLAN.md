@@ -47,3 +47,22 @@ API → DB → Redis → Worker → DB → Polling API
 - Redis only carries job references
 - payload/result stored as JSONB
 - worker uses a fake deterministic processor for MVP
+
+## Step 4 scope
+- add worker processing loop that continuously dequeues `job_id` from Redis
+- apply explicit persisted transitions: `pending -> processing -> completed|failed`
+- handle duplicate delivery safely by relying on guarded `MarkProcessing`
+- stop gracefully on context cancellation
+
+## Step 4 completion
+- implemented `internal/worker` package with:
+  - worker run loop (`Run`)
+  - guarded claim step (`MarkProcessing`)
+  - terminal transitions (`MarkCompleted` / `MarkFailed`)
+  - deterministic MVP processor
+- added worker unit tests for:
+  - duplicate-safe skip path
+  - success path
+  - processor error path
+  - empty dequeue + context cancellation path
+  - deterministic processor cancellation behavior

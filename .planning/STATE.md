@@ -7,7 +7,7 @@ Async Job Processing System
 01 — MVP Job Submission and Background Processing
 
 ## Current status
-in progress
+implementation complete; manual end-to-end UAT pending
 
 ## Objective
 Deliver a minimal end-to-end async workflow:
@@ -34,10 +34,12 @@ Deliver a minimal end-to-end async workflow:
 - queueing: queue contract and Redis adapter added (blocking dequeue + UUID parsing)
 - API validation: handler tests cover submit success, enqueue failure (`503`), and not-found mapping
 - safety: constructor dependency guards added for HTTP handler and Postgres repository
+- Step 4 completion: worker package implemented with dequeue loop, claim-then-process flow, and explicit terminal transitions
+- worker validation: unit tests added for duplicate-safe skip, success completion, processor failure, queue-empty cancellation, and processor context cancellation
 
 ## Next milestone
-First successful end-to-end job lifecycle in local Docker environment
+Manual Docker Compose end-to-end validation and phase close-out
 
 ## Risks / open questions
-- Redis queue pattern for MVP
-- duplicate processing protection approach
+- runnable service entrypoint for worker process (`cmd/worker/main.go`) not added yet
+- manual local E2E evidence still outstanding

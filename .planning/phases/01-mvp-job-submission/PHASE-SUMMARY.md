@@ -9,6 +9,8 @@
 - Redis adapter: enqueue/dequeue wiring with blocking pop, empty-queue sentinel mapping, and UUID parse checks
 - Step 3 wiring: `POST /jobs` now creates in DB then enqueues `job_id` to Redis through `queue.Queue`
 - API tests: enqueue success path verification, enqueue failure (`503`) behavior, and constructor dependency guards
+- Step 4 worker: `internal/worker` added with dequeue loop, guarded claim (`MarkProcessing`), terminal transitions (`MarkCompleted`/`MarkFailed`), and deterministic processor
+- worker tests: behavior coverage for duplicate-safe skip, success completion, processor failure, queue empty + cancel exit, and processor cancellation
 
 ## Key decisions made
 - Postgres is source of truth
@@ -20,7 +22,10 @@
 - integration tests can validate DB behavior without introducing HTTP/worker complexity
 - mapping domain models to explicit API response structs helps keep HTTP contract stable
 - introducing a queue interface before wiring API/worker keeps Redis details isolated and improves testability
+- worker loop should treat empty queue as expected idle state while still honoring context cancellation
+- transition booleans from repository methods are important correctness signals and should not be ignored
 
 ## Follow-up work
-- add worker processing loop that dequeues from Redis and applies state transitions
+- wire runnable worker entrypoint (`cmd/worker/main.go`) and service-level configuration for local run
+- execute manual Docker Compose end-to-end UAT and capture evidence
 - implement retry/visibility-timeout/dead-letter behavior in later phases
