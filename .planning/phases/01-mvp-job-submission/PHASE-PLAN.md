@@ -66,3 +66,9 @@ API → DB → Redis → Worker → DB → Polling API
   - processor error path
   - empty dequeue + context cancellation path
   - deterministic processor cancellation behavior
+
+## Step 5 scope
+- add runnable worker service entrypoint at `cmd/worker/main.go`
+- add service-level worker config loader for local runs (DB/Redis/runtime settings)
+- wire dependency construction (Postgres repository, Redis queue adapter, deterministic processor, logger)
+- add signal-aware graceful shutdown path for local process execution

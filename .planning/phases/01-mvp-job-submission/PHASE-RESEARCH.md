@@ -55,3 +55,26 @@ On cancellation:
 - `queue.ErrEmpty` is treated as a non-fatal condition in the run loop
 - `MarkCompleted` / `MarkFailed` boolean transition outcomes are checked explicitly
 - job processing logs use `job_id` structured field consistently
+
+## Step 5 runtime wiring notes
+### Local worker env vars
+Worker process should read explicit environment configuration for local run:
+- `DATABASE_URL` for Postgres connection string
+- `REDIS_ADDR` for Redis host:port
+- `REDIS_PASSWORD` and `REDIS_DB` for optional auth/database selection
+- `REDIS_QUEUE_KEY` for job queue key name
+- `REDIS_BLOCK_TIMEOUT` for blocking dequeue timeout duration
+- `WORKER_SHUTDOWN_TIMEOUT` for bounded shutdown/cleanup
+- `LOG_LEVEL` for structured logging level
+
+Use safe defaults where possible (for local development) and fail fast for required values (especially `DATABASE_URL`).
+
+### Graceful shutdown expectations
+Worker service should be signal aware (`SIGINT`, `SIGTERM`) and cancel root context on signal.
+Shutdown flow:
+1. stop accepting new dequeue work by canceling run context
+2. allow in-flight operation to observe cancellation and return
+3. close Redis and Postgres clients cleanly
+4. exit with non-zero status on startup/wiring failures
+
+This keeps local behavior predictable and production-shaped while preserving clear lifecycle ownership.
