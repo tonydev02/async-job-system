@@ -15,6 +15,23 @@ type Queue struct {
 	blockTimeout time.Duration
 }
 
+func NewRedisClient(ctx context.Context, addr, password string, db int) (*redis.Client, error) {
+	client := redis.NewClient(&redis.Options{
+		Addr:         addr,
+		Password:     password,
+		DB:           db,
+		DialTimeout:  5 * time.Second,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 5 * time.Second,
+	})
+
+	if err := client.Ping(ctx).Err(); err != nil {
+		_ = client.Close()
+		return nil, err
+	}
+	return client, nil
+}
+
 func NewQueue(client *redis.Client, key string, blockTimeout time.Duration) *Queue {
 	return &Queue{
 		client:       client,
