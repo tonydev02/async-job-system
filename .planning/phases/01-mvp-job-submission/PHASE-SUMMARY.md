@@ -13,6 +13,7 @@
 - worker tests: behavior coverage for duplicate-safe skip, success completion, processor failure, queue empty + cancel exit, and processor cancellation
 - Step 5 runtime wiring: runnable worker executable (`cmd/worker/main.go`) added with startup config loading, dependency construction, startup DB/Redis ping checks, and signal-aware shutdown
 - Step 5 config: new `internal/config` package added for typed worker env parsing and local runtime defaults
+- UAT support: worker processor now supports optional deterministic failure injection via `PROCESSOR_FAIL_JOB_ID`
 - Step 5 queue bootstrap: Redis adapter now includes explicit client constructor with startup ping
 
 ## Key decisions made
@@ -30,5 +31,5 @@
 - worker executable startup should fail fast when infrastructure connectivity is unavailable
 
 ## Follow-up work
-- execute manual Docker Compose end-to-end UAT and capture evidence
+- manual local end-to-end UAT captured (success + failure + graceful shutdown evidence)
 - implement retry/visibility-timeout/dead-letter behavior in later phases

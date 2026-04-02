@@ -7,7 +7,7 @@ Async Job Processing System
 01 — MVP Job Submission and Background Processing
 
 ## Current status
-implementation complete; manual end-to-end UAT pending
+implementation complete; manual end-to-end local UAT captured (success + failure + signal shutdown verified)
 
 ## Objective
 Deliver a minimal end-to-end async workflow:
@@ -40,7 +40,7 @@ Deliver a minimal end-to-end async workflow:
 - Step 5 validation: worker entrypoint builds through `go test ./...`; Redis client bootstrap moved to explicit constructor with startup ping
 
 ## Next milestone
-Manual Docker Compose end-to-end validation and phase close-out
+phase close-out and next-phase planning (retries / visibility-timeout / dead-letter)
 
 ## Risks / open questions
-- manual local E2E evidence still outstanding
+- no critical open items for phase 01 UAT; next major risk moves to retry/lease semantics in later phases

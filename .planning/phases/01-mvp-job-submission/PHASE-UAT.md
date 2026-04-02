@@ -31,9 +31,27 @@ Verify the MVP async flow end-to-end in local development.
 - [x] expect `error` field populated
 
 ## Remaining manual verification
-- [ ] run full API + Redis + Postgres + worker with Docker Compose and capture end-to-end evidence
+- [x] run full API + Redis + Postgres + worker locally and capture end-to-end evidence
+- [x] capture success-path evidence (`completed` + `result`) from live local run
+- [x] capture failure-path evidence (`failed` + `error`) from live local run
+- [x] capture signal-driven worker shutdown evidence (`Ctrl+C` clean exit)
+
+## Captured evidence (latest local run)
+- Success record:
+  - `job_id`: `a21dea10-f713-449b-a737-fe8bc6ff9e19`
+  - terminal status: `completed`
+  - result: `{"message":"Hello, World!"}`
+- Failure record:
+  - `job_id`: `004ede7e-3a75-4317-a574-931f6890c80c`
+  - terminal status: `failed`
+  - error: `injected processor failure for UAT`
+- Worker log contract:
+  - success path includes `msg="successfully processed job"` with `job_id`
+  - failure path includes `msg="failed to process job"` with `job_id`
+- Signal handling:
+  - worker exits cleanly on `Ctrl+C` without timeout-forced shutdown output
 
 ## Step 5 verification status
 - [x] worker executable compiles via `go test ./...` (`cmd/worker` package)
 - [x] worker runtime has startup config parsing and connectivity checks for Postgres/Redis
-- [ ] capture manual local run evidence for signal-driven shutdown behavior
+- [x] capture manual local run evidence for signal-driven shutdown behavior
