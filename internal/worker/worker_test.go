@@ -292,3 +292,17 @@ func TestDeterministicProcessor_ContextCanceled(t *testing.T) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}
 }
+
+func TestDeterministicProcessor_FailJobID(t *testing.T) {
+	jobID := uuid.New()
+	p := &DeterministicProcessor{FailJobID: jobID.String()}
+
+	_, err := p.Process(context.Background(), jobID)
+	if err == nil {
+		t.Fatal("expected injected processor failure, got nil")
+	}
+
+	if got := err.Error(); got != "injected processor failure for UAT" {
+		t.Fatalf("unexpected error: %q", got)
+	}
+}

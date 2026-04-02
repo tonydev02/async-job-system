@@ -82,5 +82,5 @@ API → DB → Redis → Worker → DB → Polling API
 - implemented `internal/config` worker config loader with typed env parsing:
   - required `DATABASE_URL`
   - Redis settings (`REDIS_ADDR`, `REDIS_PASSWORD`, `REDIS_DB`, `REDIS_QUEUE_KEY`, `REDIS_BLOCK_TIMEOUT`)
-  - runtime settings (`WORKER_SHUTDOWN_TIMEOUT`, `LOG_LEVEL`)
+  - runtime settings (`WORKER_SHUTDOWN_TIMEOUT`, `PROCESSOR_FAIL_JOB_ID`, `LOG_LEVEL`)
 - extended Redis adapter with `NewRedisClient` startup constructor + `Ping` verification

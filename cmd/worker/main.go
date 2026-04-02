@@ -79,7 +79,7 @@ func run(ctx context.Context, cfg config.WorkerConfig) error {
 
 	repo := postgres.NewRepository(db)
 	q := redisqueue.NewQueue(redisClient, cfg.RedisQueueKey, cfg.RedisBlockTimeout)
-	processor := &worker.DeterministicProcessor{}
+	processor := &worker.DeterministicProcessor{FailJobID: cfg.ProcessorFailJobID}
 	w := worker.NewWorker(repo, q, processor, logger)
 
 	w.Run(ctx)

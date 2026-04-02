@@ -65,6 +65,7 @@ Worker process should read explicit environment configuration for local run:
 - `REDIS_QUEUE_KEY` for job queue key name
 - `REDIS_BLOCK_TIMEOUT` for blocking dequeue timeout duration
 - `WORKER_SHUTDOWN_TIMEOUT` for bounded shutdown/cleanup
+- `PROCESSOR_FAIL_JOB_ID` (optional) to inject a deterministic worker failure for one job ID during manual UAT
 - `LOG_LEVEL` for structured logging level
 
 Use safe defaults where possible (for local development) and fail fast for required values (especially `DATABASE_URL`).

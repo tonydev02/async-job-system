@@ -8,14 +8,15 @@ import (
 )
 
 type WorkerConfig struct {
-	DatabaseURL       string
-	RedisAddr         string
-	RedisPassword     string
-	RedisDB           int
-	RedisQueueKey     string
-	RedisBlockTimeout time.Duration
-	ShutdownTimeout   time.Duration
-	LogLevel          string
+	DatabaseURL        string
+	RedisAddr          string
+	RedisPassword      string
+	RedisDB            int
+	RedisQueueKey      string
+	RedisBlockTimeout  time.Duration
+	ShutdownTimeout    time.Duration
+	ProcessorFailJobID string
+	LogLevel           string
 }
 
 func LoadWorkerConfig() (WorkerConfig, error) {
@@ -40,14 +41,15 @@ func LoadWorkerConfig() (WorkerConfig, error) {
 	}
 
 	return WorkerConfig{
-		DatabaseURL:       dbURL,
-		RedisAddr:         getEnv("REDIS_ADDR", "localhost:6379"),
-		RedisPassword:     getEnv("REDIS_PASSWORD", ""),
-		RedisDB:           redisDB,
-		RedisQueueKey:     getEnv("REDIS_QUEUE_KEY", "jobs:queue"),
-		RedisBlockTimeout: blockTimeout,
-		ShutdownTimeout:   shutdownTimeout,
-		LogLevel:          getEnv("LOG_LEVEL", "info"),
+		DatabaseURL:        dbURL,
+		RedisAddr:          getEnv("REDIS_ADDR", "localhost:6379"),
+		RedisPassword:      getEnv("REDIS_PASSWORD", ""),
+		RedisDB:            redisDB,
+		RedisQueueKey:      getEnv("REDIS_QUEUE_KEY", "jobs:queue"),
+		RedisBlockTimeout:  blockTimeout,
+		ShutdownTimeout:    shutdownTimeout,
+		ProcessorFailJobID: getEnv("PROCESSOR_FAIL_JOB_ID", ""),
+		LogLevel:           getEnv("LOG_LEVEL", "info"),
 	}, nil
 }
 
