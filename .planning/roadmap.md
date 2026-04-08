@@ -1,9 +1,9 @@
 # Roadmap
 
 ## Current Snapshot
-- Current phase: `01-mvp-job-submission`
-- Status: complete and manually validated locally
-- Next phase: `02-retries-and-failure-handling`
+- Current phase: `02-retries-and-failure-handling`
+- Status: in progress (repository-layer retry foundation implemented; worker/runtime integration pending)
+- Next phase: `03-concurrency-and-worker-safety`
 
 ## Phase Map
 1. `01-mvp-job-submission`
@@ -12,7 +12,7 @@ Status: done.
 
 2. `02-retries-and-failure-handling`
 Goal: implement retry policy, bounded attempts, and explicit terminal failure behavior.
-Status: next up.
+Status: in progress.
 
 3. `03-concurrency-and-worker-safety`
 Goal: harden duplicate delivery handling and multi-worker race safety.

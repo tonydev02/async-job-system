@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -49,6 +50,18 @@ func (f *fakeRepo) MarkCompleted(context.Context, uuid.UUID, json.RawMessage) (b
 }
 
 func (f *fakeRepo) MarkFailed(context.Context, uuid.UUID, string) (bool, error) {
+	return false, nil
+}
+
+func (f *fakeRepo) HandleProcessingFailure(context.Context, uuid.UUID, string, time.Duration) (jobs.FailureTransitionResult, error) {
+	return jobs.FailureTransitionResult{}, nil
+}
+
+func (f *fakeRepo) ClaimDueRetries(context.Context, time.Time, int) ([]uuid.UUID, error) {
+	return nil, nil
+}
+
+func (f *fakeRepo) RescheduleRetry(context.Context, uuid.UUID, time.Duration) (bool, error) {
 	return false, nil
 }
 

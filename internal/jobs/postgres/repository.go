@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -125,6 +126,158 @@ func (r *Repository) MarkFailed(ctx context.Context, id uuid.UUID, errMsg string
 	}
 
 	return rowsAffected(res)
+}
+
+func (r *Repository) HandleProcessingFailure(ctx context.Context, id uuid.UUID, errMsg string, retryDelay time.Duration) (jobs.FailureTransitionResult, error) {
+	if errMsg == "" {
+		return jobs.FailureTransitionResult{}, errors.New("errMsg is required")
+	}
+
+	if retryDelay <= 0 {
+		return jobs.FailureTransitionResult{}, errors.New("retryDelay must be greater than zero")
+	}
+
+	const query = `
+		UPDATE jobs
+		SET status = CASE	
+			WHEN attempt >= max_attempts THEN $2
+			ELSE $3
+		END,
+		error = $4,
+		next_run_at = CASE
+			WHEN attempt >= max_attempts THEN NULL
+			ELSE now() + ($5 || ' seconds')::interval
+		END,
+		completed_at = CASE
+			WHEN attempt >= max_attempts THEN now()
+			ELSE NULL
+		END,
+		updated_at = now()
+		WHERE id = $1 AND status = $6
+		RETURNING attempt, max_attempts, status, next_run_at
+	`
+
+	var (
+		attempt     int
+		maxAttempts int
+		status      string
+		nextRunAt   sql.NullTime
+	)
+
+	err := r.db.QueryRowContext(
+		ctx,
+		query,
+		id,
+		jobs.StatusFailed,
+		jobs.StatusPending,
+		errMsg,
+		int(retryDelay.Seconds()),
+		jobs.StatusProcessing,
+	).Scan(&attempt, &maxAttempts, &status, &nextRunAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return jobs.FailureTransitionResult{Applied: false}, nil
+		}
+		return jobs.FailureTransitionResult{}, err
+	}
+
+	result := jobs.FailureTransitionResult{
+		Applied:     true,
+		Attempt:     attempt,
+		MaxAttempts: maxAttempts,
+	}
+
+	if status == string(jobs.StatusPending) {
+		result.Decision = jobs.FailureDecisionRetry
+		if nextRunAt.Valid {
+			t := nextRunAt.Time
+			result.NextRunAt = &t
+		}
+	} else {
+		result.Decision = jobs.FailureDecisionTerminal
+		result.NextRunAt = nil
+	}
+
+	return result, nil
+}
+
+func (r *Repository) ClaimDueRetries(ctx context.Context, now time.Time, limit int) ([]uuid.UUID, error) {
+	if limit <= 0 {
+		return nil, errors.New("limit must be greater than zero")
+	}
+
+	const query = `
+		UPDATE jobs
+		SET 
+			next_run_at = NULL,
+			updated_at = now()
+		WHERE id IN (
+			SELECT id
+			FROM jobs
+			WHERE status = $1
+				AND next_run_at IS NOT NULL
+				AND next_run_at <= $2
+			ORDER BY next_run_at
+			FOR UPDATE SKIP LOCKED
+			LIMIT $3
+		)
+		RETURNING id
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, jobs.StatusPending, now, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return ids, nil
+}
+
+func (r *Repository) RescheduleRetry(ctx context.Context, id uuid.UUID, delay time.Duration) (bool, error) {
+	if delay <= 0 {
+		return false, errors.New("delay must be greater than zero")
+	}
+
+	query := `
+		UPDATE jobs
+		SET 
+			next_run_at = now() + ($2 * interval '1 second'),
+			updated_at = now()
+		WHERE id = $1 
+			AND status = $3
+		RETURNING id
+	`
+
+	var returnedID uuid.UUID
+	err := r.db.QueryRowContext(
+		ctx,
+		query,
+		id,
+		int(delay.Seconds()),
+		jobs.StatusPending,
+	).Scan(&returnedID)
+
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	return true, nil
 }
 
 func rowsAffected(res sql.Result) (bool, error) {

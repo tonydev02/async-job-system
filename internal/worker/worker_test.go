@@ -82,6 +82,18 @@ func (f *fakeRepo) MarkFailed(ctx context.Context, id uuid.UUID, errMsg string) 
 	panic("unexpected call: fakeRepo.MarkFailed")
 }
 
+func (f *fakeRepo) HandleProcessingFailure(ctx context.Context, id uuid.UUID, errMsg string, retryDelay time.Duration) (jobs.FailureTransitionResult, error) {
+	return jobs.FailureTransitionResult{}, nil
+}
+
+func (f *fakeRepo) ClaimDueRetries(ctx context.Context, now time.Time, limit int) ([]uuid.UUID, error) {
+	return nil, nil
+}
+
+func (f *fakeRepo) RescheduleRetry(ctx context.Context, id uuid.UUID, delay time.Duration) (bool, error) {
+	return false, nil
+}
+
 type fakeQueue struct {
 	enqueueFn func(ctx context.Context, msg queue.Message) error
 	dequeueFn func(ctx context.Context) (queue.Message, error)
