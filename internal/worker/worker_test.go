@@ -16,24 +16,29 @@ import (
 )
 
 type fakeRepo struct {
-	createFn         func(ctx context.Context, params jobs.CreateParams) (jobs.Job, error)
-	getByIDFn        func(ctx context.Context, id uuid.UUID) (jobs.Job, error)
-	markProcessingFn func(ctx context.Context, id uuid.UUID) (bool, error)
-	markCompletedFn  func(ctx context.Context, id uuid.UUID, result json.RawMessage) (bool, error)
-	markFailedFn     func(ctx context.Context, id uuid.UUID, errMsg string) (bool, error)
+	createFn                  func(ctx context.Context, params jobs.CreateParams) (jobs.Job, error)
+	getByIDFn                 func(ctx context.Context, id uuid.UUID) (jobs.Job, error)
+	markProcessingFn          func(ctx context.Context, id uuid.UUID) (bool, error)
+	markCompletedFn           func(ctx context.Context, id uuid.UUID, result json.RawMessage) (bool, error)
+	markFailedFn              func(ctx context.Context, id uuid.UUID, errMsg string) (bool, error)
+	handleProcessingFailureFn func(ctx context.Context, id uuid.UUID, errMsg string, retryDelay time.Duration) (jobs.FailureTransitionResult, error)
 
-	createCalls         int
-	getByIDCalls        int
-	markProcessingCalls int
-	markCompletedCalls  int
-	markFailedCalls     int
+	createCalls                  int
+	getByIDCalls                 int
+	markProcessingCalls          int
+	markCompletedCalls           int
+	markFailedCalls              int
+	handleProcessingFailureCalls int
 
-	lastGetByIDID        uuid.UUID
-	lastMarkProcessingID uuid.UUID
-	lastMarkCompletedID  uuid.UUID
-	lastMarkCompletedRes json.RawMessage
-	lastMarkFailedID     uuid.UUID
-	lastMarkFailedErr    string
+	lastGetByIDID          uuid.UUID
+	lastMarkProcessingID   uuid.UUID
+	lastMarkCompletedID    uuid.UUID
+	lastMarkCompletedRes   json.RawMessage
+	lastMarkFailedID       uuid.UUID
+	lastMarkFailedErr      string
+	lastHandleFailureID    uuid.UUID
+	lastHandleFailureErr   string
+	lastHandleFailureDelay time.Duration
 }
 
 func (f *fakeRepo) Create(ctx context.Context, params jobs.CreateParams) (jobs.Job, error) {
@@ -83,7 +88,14 @@ func (f *fakeRepo) MarkFailed(ctx context.Context, id uuid.UUID, errMsg string) 
 }
 
 func (f *fakeRepo) HandleProcessingFailure(ctx context.Context, id uuid.UUID, errMsg string, retryDelay time.Duration) (jobs.FailureTransitionResult, error) {
-	return jobs.FailureTransitionResult{}, nil
+	f.handleProcessingFailureCalls++
+	f.lastHandleFailureID = id
+	f.lastHandleFailureErr = errMsg
+	f.lastHandleFailureDelay = retryDelay
+	if f.handleProcessingFailureFn != nil {
+		return f.handleProcessingFailureFn(ctx, id, errMsg, retryDelay)
+	}
+	panic("unexpected call: fakeRepo.HandleProcessingFailure")
 }
 
 func (f *fakeRepo) ClaimDueRetries(ctx context.Context, now time.Time, limit int) ([]uuid.UUID, error) {
@@ -173,8 +185,8 @@ func TestHandleMessage_MarkProcessingFalse_SkipProcessor(t *testing.T) {
 	if repo.markCompletedCalls != 0 {
 		t.Fatalf("expected repo.MarkCompleted to not be called, but it was called %d times", repo.markCompletedCalls)
 	}
-	if repo.markFailedCalls != 0 {
-		t.Fatalf("expected repo.MarkFailed to not be called, but it was called %d times", repo.markFailedCalls)
+	if repo.handleProcessingFailureCalls != 0 {
+		t.Fatalf("expected repo.HandleProcessingFailure to not be called, but it was called %d times", repo.handleProcessingFailureCalls)
 	}
 }
 
@@ -211,19 +223,29 @@ func TestProcessJob_Success_MarksCompleted(t *testing.T) {
 	if repo.markCompletedCalls != 1 {
 		t.Fatalf("expected repo.MarkCompleted to be called once, but it was called %d times", repo.markCompletedCalls)
 	}
-	if repo.markFailedCalls != 0 {
-		t.Fatalf("expected repo.MarkFailed to not be called, but it was called %d times", repo.markFailedCalls)
+	if repo.handleProcessingFailureCalls != 0 {
+		t.Fatalf("expected repo.HandleProcessingFailure to not be called, but it was called %d times", repo.handleProcessingFailureCalls)
 	}
 }
 
-func TestProcessJob_ProcessorError_MarksFailed(t *testing.T) {
+func TestProcessJob_ProcessorError_HandlesFailureTransitionRetry(t *testing.T) {
 	processErr := errors.New("processor failed")
 	repo := &fakeRepo{
-		markFailedFn: func(ctx context.Context, id uuid.UUID, errMsg string) (bool, error) {
+		handleProcessingFailureFn: func(ctx context.Context, id uuid.UUID, errMsg string, retryDelay time.Duration) (jobs.FailureTransitionResult, error) {
 			if errMsg != processErr.Error() {
 				t.Fatalf("unexpected error message: %q", errMsg)
 			}
-			return true, nil
+			if retryDelay != defaultProcessingFailureRetryDelay {
+				t.Fatalf("unexpected retry delay: got %s want %s", retryDelay, defaultProcessingFailureRetryDelay)
+			}
+			nextRunAt := time.Now().Add(retryDelay)
+			return jobs.FailureTransitionResult{
+				Applied:     true,
+				Decision:    jobs.FailureDecisionRetry,
+				Attempt:     1,
+				MaxAttempts: 3,
+				NextRunAt:   &nextRunAt,
+			}, nil
 		},
 	}
 	q := &fakeQueue{}
@@ -241,8 +263,80 @@ func TestProcessJob_ProcessorError_MarksFailed(t *testing.T) {
 		t.Fatalf("expected error %v, got %v", processErr, err)
 	}
 
-	if repo.markFailedCalls != 1 {
-		t.Fatalf("expected repo.MarkFailed to be called once, but it was called %d times", repo.markFailedCalls)
+	if repo.handleProcessingFailureCalls != 1 {
+		t.Fatalf("expected repo.HandleProcessingFailure to be called once, but it was called %d times", repo.handleProcessingFailureCalls)
+	}
+	if repo.lastHandleFailureID != jobID {
+		t.Fatalf("expected HandleProcessingFailure to be called with job ID %s, but got %s", jobID, repo.lastHandleFailureID)
+	}
+	if repo.lastHandleFailureErr != processErr.Error() {
+		t.Fatalf("expected HandleProcessingFailure error %q, got %q", processErr.Error(), repo.lastHandleFailureErr)
+	}
+	if repo.lastHandleFailureDelay != defaultProcessingFailureRetryDelay {
+		t.Fatalf("expected HandleProcessingFailure retry delay %s, got %s", defaultProcessingFailureRetryDelay, repo.lastHandleFailureDelay)
+	}
+	if repo.markCompletedCalls != 0 {
+		t.Fatalf("expected repo.MarkCompleted to not be called, but it was called %d times", repo.markCompletedCalls)
+	}
+}
+
+func TestProcessJob_ProcessorError_HandlesFailureTransitionTerminal(t *testing.T) {
+	processErr := errors.New("processor failed")
+	repo := &fakeRepo{
+		handleProcessingFailureFn: func(ctx context.Context, id uuid.UUID, errMsg string, retryDelay time.Duration) (jobs.FailureTransitionResult, error) {
+			return jobs.FailureTransitionResult{
+				Applied:     true,
+				Decision:    jobs.FailureDecisionTerminal,
+				Attempt:     3,
+				MaxAttempts: 3,
+			}, nil
+		},
+	}
+	q := &fakeQueue{}
+	processor := &fakeProcessor{
+		processFn: func(ctx context.Context, jobID uuid.UUID) (json.RawMessage, error) {
+			return nil, processErr
+		},
+	}
+
+	worker := newTestWorker(repo, q, processor)
+
+	jobID := uuid.New()
+	err := worker.processJob(context.Background(), jobID)
+	if !errors.Is(err, processErr) {
+		t.Fatalf("expected error %v, got %v", processErr, err)
+	}
+	if repo.handleProcessingFailureCalls != 1 {
+		t.Fatalf("expected repo.HandleProcessingFailure to be called once, but it was called %d times", repo.handleProcessingFailureCalls)
+	}
+	if repo.markCompletedCalls != 0 {
+		t.Fatalf("expected repo.MarkCompleted to not be called, but it was called %d times", repo.markCompletedCalls)
+	}
+}
+
+func TestProcessJob_ProcessorError_TransitionAlreadyApplied(t *testing.T) {
+	processErr := errors.New("processor failed")
+	repo := &fakeRepo{
+		handleProcessingFailureFn: func(ctx context.Context, id uuid.UUID, errMsg string, retryDelay time.Duration) (jobs.FailureTransitionResult, error) {
+			return jobs.FailureTransitionResult{Applied: false}, nil
+		},
+	}
+	q := &fakeQueue{}
+	processor := &fakeProcessor{
+		processFn: func(ctx context.Context, jobID uuid.UUID) (json.RawMessage, error) {
+			return nil, processErr
+		},
+	}
+
+	worker := newTestWorker(repo, q, processor)
+
+	jobID := uuid.New()
+	err := worker.processJob(context.Background(), jobID)
+	if !errors.Is(err, processErr) {
+		t.Fatalf("expected error %v, got %v", processErr, err)
+	}
+	if repo.handleProcessingFailureCalls != 1 {
+		t.Fatalf("expected repo.HandleProcessingFailure to be called once, but it was called %d times", repo.handleProcessingFailureCalls)
 	}
 	if repo.markCompletedCalls != 0 {
 		t.Fatalf("expected repo.MarkCompleted to not be called, but it was called %d times", repo.markCompletedCalls)

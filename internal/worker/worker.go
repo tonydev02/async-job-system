@@ -4,17 +4,21 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/namta/async-job-system/internal/jobs"
 	"github.com/namta/async-job-system/internal/queue"
 )
 
+const defaultProcessingFailureRetryDelay = 30 * time.Second
+
 type Worker struct {
-	repo      jobs.Repository
-	queue     queue.Queue
-	processor Processor
-	logger    *slog.Logger
+	repo                        jobs.Repository
+	queue                       queue.Queue
+	processor                   Processor
+	logger                      *slog.Logger
+	processingFailureRetryDelay time.Duration
 }
 
 func NewWorker(repo jobs.Repository, queue queue.Queue, processor Processor, logger *slog.Logger) *Worker {
@@ -31,10 +35,11 @@ func NewWorker(repo jobs.Repository, queue queue.Queue, processor Processor, log
 		logger = slog.Default()
 	}
 	return &Worker{
-		repo:      repo,
-		queue:     queue,
-		processor: processor,
-		logger:    logger,
+		repo:                        repo,
+		queue:                       queue,
+		processor:                   processor,
+		logger:                      logger,
+		processingFailureRetryDelay: defaultProcessingFailureRetryDelay,
 	}
 }
 
@@ -77,13 +82,43 @@ func (w *Worker) processJob(ctx context.Context, jobID uuid.UUID) error {
 	result, err := w.processor.Process(ctx, jobID)
 	if err != nil {
 		w.logger.Error("failed to process job", "job_id", jobID, "error", err)
-		ok, markErr := w.repo.MarkFailed(ctx, jobID, err.Error())
+
+		transition, markErr := w.repo.HandleProcessingFailure(ctx, jobID, err.Error(), w.processingFailureRetryDelay)
 		if markErr != nil {
-			w.logger.Error("failed to mark job as failed", "job_id", jobID, "error", markErr)
+			w.logger.Error("failed to handle processing failure", "job_id", jobID, "error", markErr)
 			return markErr
 		}
-		if !ok {
-			w.logger.Info("job is already marked as failed by another worker", "job_id", jobID)
+		if !transition.Applied {
+			w.logger.Info("processing failure transition was already applied by another worker", "job_id", jobID)
+			return err
+		}
+
+		switch transition.Decision {
+		case jobs.FailureDecisionRetry:
+			w.logger.Info(
+				"job failure transitioned to retry",
+				"job_id", jobID,
+				"decision", transition.Decision,
+				"attempt", transition.Attempt,
+				"max_attempts", transition.MaxAttempts,
+				"next_run_at", transition.NextRunAt,
+			)
+		case jobs.FailureDecisionTerminal:
+			w.logger.Info(
+				"job failure transitioned to terminal failed",
+				"job_id", jobID,
+				"decision", transition.Decision,
+				"attempt", transition.Attempt,
+				"max_attempts", transition.MaxAttempts,
+			)
+		default:
+			w.logger.Warn(
+				"job failure transition returned unknown decision",
+				"job_id", jobID,
+				"decision", transition.Decision,
+				"attempt", transition.Attempt,
+				"max_attempts", transition.MaxAttempts,
+			)
 		}
 		return err
 	}
