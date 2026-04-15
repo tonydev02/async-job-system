@@ -25,6 +25,8 @@ Reason:
 ### Due retry dispatch
 Claim due rows with `FOR UPDATE SKIP LOCKED`, clear `next_run_at` on claim, enqueue each job ID.
 On enqueue failure, re-schedule in Postgres with a short reenqueue delay.
+Run this via a worker background ticker loop so dispatch happens even when no new queue messages arrive.
+Keep dispatcher behavior explicit in worker runtime (claim -> enqueue -> reschedule-on-failure) for traceable ops logs.
 
 Reason:
 - multi-worker safe claiming

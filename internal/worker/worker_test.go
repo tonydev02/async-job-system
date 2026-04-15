@@ -22,6 +22,8 @@ type fakeRepo struct {
 	markCompletedFn           func(ctx context.Context, id uuid.UUID, result json.RawMessage) (bool, error)
 	markFailedFn              func(ctx context.Context, id uuid.UUID, errMsg string) (bool, error)
 	handleProcessingFailureFn func(ctx context.Context, id uuid.UUID, errMsg string, retryDelay time.Duration) (jobs.FailureTransitionResult, error)
+	claimDueRetriesFn         func(ctx context.Context, now time.Time, limit int) ([]uuid.UUID, error)
+	rescheduleRetryFn         func(ctx context.Context, id uuid.UUID, delay time.Duration) (bool, error)
 
 	createCalls                  int
 	getByIDCalls                 int
@@ -29,6 +31,8 @@ type fakeRepo struct {
 	markCompletedCalls           int
 	markFailedCalls              int
 	handleProcessingFailureCalls int
+	claimDueRetriesCalls         int
+	rescheduleRetryCalls         int
 
 	lastGetByIDID          uuid.UUID
 	lastMarkProcessingID   uuid.UUID
@@ -39,6 +43,10 @@ type fakeRepo struct {
 	lastHandleFailureID    uuid.UUID
 	lastHandleFailureErr   string
 	lastHandleFailureDelay time.Duration
+	lastClaimDueRetriesNow   time.Time
+	lastClaimDueRetriesLimit int
+	lastRescheduleRetryID    uuid.UUID
+	lastRescheduleRetryDelay time.Duration
 }
 
 func (f *fakeRepo) Create(ctx context.Context, params jobs.CreateParams) (jobs.Job, error) {
@@ -99,10 +107,22 @@ func (f *fakeRepo) HandleProcessingFailure(ctx context.Context, id uuid.UUID, er
 }
 
 func (f *fakeRepo) ClaimDueRetries(ctx context.Context, now time.Time, limit int) ([]uuid.UUID, error) {
+	f.claimDueRetriesCalls++
+	f.lastClaimDueRetriesNow = now
+	f.lastClaimDueRetriesLimit = limit
+	if f.claimDueRetriesFn != nil {
+		return f.claimDueRetriesFn(ctx, now, limit)
+	}
 	return nil, nil
 }
 
 func (f *fakeRepo) RescheduleRetry(ctx context.Context, id uuid.UUID, delay time.Duration) (bool, error) {
+	f.rescheduleRetryCalls++
+	f.lastRescheduleRetryID = id
+	f.lastRescheduleRetryDelay = delay
+	if f.rescheduleRetryFn != nil {
+		return f.rescheduleRetryFn(ctx, id, delay)
+	}
 	return false, nil
 }
 
@@ -114,11 +134,13 @@ type fakeQueue struct {
 	dequeueCalls int
 
 	lastEnqueueMsg queue.Message
+	enqueueMsgs    []queue.Message
 }
 
 func (f *fakeQueue) Enqueue(ctx context.Context, msg queue.Message) error {
 	f.enqueueCalls++
 	f.lastEnqueueMsg = msg
+	f.enqueueMsgs = append(f.enqueueMsgs, msg)
 	if f.enqueueFn != nil {
 		return f.enqueueFn(ctx, msg)
 	}
@@ -385,6 +407,159 @@ func TestRun_DequeueEmpty_StopsOnContextCancel(t *testing.T) {
 
 	if q.dequeueCalls == 0 {
 		t.Fatal("expected queue.Dequeue to be called at least once")
+	}
+}
+
+func TestDispatchDueRetries_ClaimsAndEnqueues(t *testing.T) {
+	id1 := uuid.New()
+	id2 := uuid.New()
+	now := time.Date(2026, 4, 16, 9, 0, 0, 0, time.UTC)
+
+	repo := &fakeRepo{
+		claimDueRetriesFn: func(ctx context.Context, claimNow time.Time, limit int) ([]uuid.UUID, error) {
+			if !claimNow.Equal(now) {
+				t.Fatalf("unexpected claim time: got %v want %v", claimNow, now)
+			}
+			if limit != defaultRetryDispatchBatchSize {
+				t.Fatalf("unexpected claim limit: got %d want %d", limit, defaultRetryDispatchBatchSize)
+			}
+			return []uuid.UUID{id1, id2}, nil
+		},
+	}
+	q := &fakeQueue{
+		enqueueFn: func(ctx context.Context, msg queue.Message) error {
+			return nil
+		},
+	}
+	processor := &fakeProcessor{}
+	worker := newTestWorker(repo, q, processor)
+
+	if err := worker.dispatchDueRetries(context.Background(), now); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if repo.claimDueRetriesCalls != 1 {
+		t.Fatalf("expected ClaimDueRetries to be called once, got %d", repo.claimDueRetriesCalls)
+	}
+	if q.enqueueCalls != 2 {
+		t.Fatalf("expected Enqueue to be called twice, got %d", q.enqueueCalls)
+	}
+	if len(q.enqueueMsgs) != 2 {
+		t.Fatalf("expected 2 enqueue messages, got %d", len(q.enqueueMsgs))
+	}
+	if q.enqueueMsgs[0].JobID != id1 {
+		t.Fatalf("first enqueued job ID mismatch: got %s want %s", q.enqueueMsgs[0].JobID, id1)
+	}
+	if q.enqueueMsgs[1].JobID != id2 {
+		t.Fatalf("second enqueued job ID mismatch: got %s want %s", q.enqueueMsgs[1].JobID, id2)
+	}
+	if repo.rescheduleRetryCalls != 0 {
+		t.Fatalf("expected no reschedule calls, got %d", repo.rescheduleRetryCalls)
+	}
+}
+
+func TestDispatchDueRetries_EnqueueFailure_Reschedules(t *testing.T) {
+	id := uuid.New()
+	now := time.Date(2026, 4, 16, 9, 0, 0, 0, time.UTC)
+
+	repo := &fakeRepo{
+		claimDueRetriesFn: func(ctx context.Context, claimNow time.Time, limit int) ([]uuid.UUID, error) {
+			return []uuid.UUID{id}, nil
+		},
+		rescheduleRetryFn: func(ctx context.Context, jobID uuid.UUID, delay time.Duration) (bool, error) {
+			if jobID != id {
+				t.Fatalf("unexpected job ID in reschedule: got %s want %s", jobID, id)
+			}
+			if delay != defaultRetryReenqueueDelay {
+				t.Fatalf("unexpected reschedule delay: got %s want %s", delay, defaultRetryReenqueueDelay)
+			}
+			return true, nil
+		},
+	}
+	q := &fakeQueue{
+		enqueueFn: func(ctx context.Context, msg queue.Message) error {
+			return errors.New("redis unavailable")
+		},
+	}
+	processor := &fakeProcessor{}
+	worker := newTestWorker(repo, q, processor)
+
+	if err := worker.dispatchDueRetries(context.Background(), now); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if q.enqueueCalls != 1 {
+		t.Fatalf("expected Enqueue to be called once, got %d", q.enqueueCalls)
+	}
+	if repo.rescheduleRetryCalls != 1 {
+		t.Fatalf("expected RescheduleRetry to be called once, got %d", repo.rescheduleRetryCalls)
+	}
+	if repo.lastRescheduleRetryID != id {
+		t.Fatalf("unexpected reschedule job ID: got %s want %s", repo.lastRescheduleRetryID, id)
+	}
+	if repo.lastRescheduleRetryDelay != defaultRetryReenqueueDelay {
+		t.Fatalf("unexpected reschedule delay: got %s want %s", repo.lastRescheduleRetryDelay, defaultRetryReenqueueDelay)
+	}
+}
+
+func TestDispatchDueRetries_ClaimDueRetriesError_ReturnsErrorAndSkipsEnqueue(t *testing.T) {
+	claimErr := errors.New("claim failed")
+	now := time.Date(2026, 4, 16, 9, 0, 0, 0, time.UTC)
+
+	repo := &fakeRepo{
+		claimDueRetriesFn: func(ctx context.Context, claimNow time.Time, limit int) ([]uuid.UUID, error) {
+			return nil, claimErr
+		},
+	}
+	q := &fakeQueue{
+		enqueueFn: func(ctx context.Context, msg queue.Message) error { return nil },
+	}
+	processor := &fakeProcessor{}
+	worker := newTestWorker(repo, q, processor)
+
+	err := worker.dispatchDueRetries(context.Background(), now)
+	if !errors.Is(err, claimErr) {
+		t.Fatalf("expected error %v, got %v", claimErr, err)
+	}
+	if q.enqueueCalls != 0 {
+		t.Fatalf("expected Enqueue to not be called, got %d calls", q.enqueueCalls)
+	}
+	if repo.rescheduleRetryCalls != 0 {
+		t.Fatalf("expected RescheduleRetry to not be called, got %d calls", repo.rescheduleRetryCalls)
+	}
+}
+
+func TestRunRetryDispatcher_DispatchesImmediatelyOnStart(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	repo := &fakeRepo{
+		claimDueRetriesFn: func(ctx context.Context, now time.Time, limit int) ([]uuid.UUID, error) {
+			cancel()
+			return nil, nil
+		},
+	}
+	q := &fakeQueue{
+		enqueueFn: func(ctx context.Context, msg queue.Message) error { return nil },
+	}
+	processor := &fakeProcessor{}
+	worker := newTestWorker(repo, q, processor)
+	worker.retryDispatchInterval = time.Hour
+
+	done := make(chan struct{})
+	go func() {
+		worker.runRetryDispatcher(ctx)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("runRetryDispatcher did not stop after context cancellation")
+	}
+
+	if repo.claimDueRetriesCalls == 0 {
+		t.Fatal("expected ClaimDueRetries to be called immediately on start")
 	}
 }
 

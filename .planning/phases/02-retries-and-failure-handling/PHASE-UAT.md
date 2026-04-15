@@ -17,12 +17,12 @@ Validate retry lifecycle behavior end-to-end for transient and terminal failures
 - [ ] `next_run_at` is cleared
 
 ### 3. Due-retry dispatch
-- [ ] due retries (`next_run_at <= now`) are claimed from Postgres
+- [x] due retries (`next_run_at <= now`) are claimed from Postgres
 - [ ] claimed rows have `next_run_at` cleared during claim
-- [ ] claimed job IDs are enqueued back to Redis
+- [x] claimed job IDs are enqueued back to Redis
 
 ### 4. Dispatch enqueue failure safety
-- [ ] enqueue failure during retry dispatch triggers DB reschedule
+- [x] enqueue failure during retry dispatch triggers DB reschedule
 - [ ] re-scheduled `next_run_at` is set with reenqueue delay
 
 ### 5. API visibility
@@ -32,6 +32,12 @@ Validate retry lifecycle behavior end-to-end for transient and terminal failures
 - [x] `go test ./internal/jobs/postgres ./internal/worker ./internal/httpapi`
 - [ ] `go test ./...`
 - [ ] `go vet ./...`
+
+## Automated evidence captured
+- [x] worker dispatcher claims and enqueues due retries (`TestDispatchDueRetries_ClaimsAndEnqueues`)
+- [x] worker dispatcher reschedules on enqueue failure (`TestDispatchDueRetries_EnqueueFailure_Reschedules`)
+- [x] worker dispatcher returns claim errors without enqueue attempts (`TestDispatchDueRetries_ClaimDueRetriesError_ReturnsErrorAndSkipsEnqueue`)
+- [x] worker dispatcher performs immediate dispatch on startup (`TestRunRetryDispatcher_DispatchesImmediatelyOnStart`)
 
 ## Manual verification
 - [ ] run local API + worker + Postgres + Redis and capture retry cycle evidence

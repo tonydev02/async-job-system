@@ -12,6 +12,9 @@ import (
 )
 
 const defaultProcessingFailureRetryDelay = 30 * time.Second
+const defaultRetryDispatchInterval = 1 * time.Minute
+const defaultRetryDispatchBatchSize = 10
+const defaultRetryReenqueueDelay = 1 * time.Minute
 
 type Worker struct {
 	repo                        jobs.Repository
@@ -19,6 +22,9 @@ type Worker struct {
 	processor                   Processor
 	logger                      *slog.Logger
 	processingFailureRetryDelay time.Duration
+	retryDispatchInterval       time.Duration
+	retryDispatchBatchSize      int
+	retryReenqueueDelay         time.Duration
 }
 
 func NewWorker(repo jobs.Repository, queue queue.Queue, processor Processor, logger *slog.Logger) *Worker {
@@ -40,10 +46,15 @@ func NewWorker(repo jobs.Repository, queue queue.Queue, processor Processor, log
 		processor:                   processor,
 		logger:                      logger,
 		processingFailureRetryDelay: defaultProcessingFailureRetryDelay,
+		retryDispatchInterval:       defaultRetryDispatchInterval,
+		retryDispatchBatchSize:      defaultRetryDispatchBatchSize,
+		retryReenqueueDelay:         defaultRetryReenqueueDelay,
 	}
 }
 
 func (w *Worker) Run(ctx context.Context) {
+	go w.runRetryDispatcher(ctx)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -134,5 +145,54 @@ func (w *Worker) processJob(ctx context.Context, jobID uuid.UUID) error {
 	}
 
 	w.logger.Info("successfully processed job", "job_id", jobID)
+	return nil
+}
+
+func (w *Worker) runRetryDispatcher(ctx context.Context) {
+	select {
+	case <-ctx.Done():
+		return
+	default:
+	}
+
+	if err := w.dispatchDueRetries(ctx, time.Now()); err != nil {
+		w.logger.Error("failed to dispatch retries", "error", err)
+	}
+
+	ticker := time.NewTicker(w.retryDispatchInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := w.dispatchDueRetries(ctx, time.Now()); err != nil {
+				w.logger.Error("failed to dispatch retries", "error", err)
+			}
+		}
+	}
+}
+
+func (w *Worker) dispatchDueRetries(ctx context.Context, now time.Time) error {
+	ids, err := w.repo.ClaimDueRetries(ctx, now, w.retryDispatchBatchSize)
+	if err != nil {
+		return err
+	}
+
+	for _, id := range ids {
+		if err := w.queue.Enqueue(ctx, queue.Message{JobID: id}); err != nil {
+			w.logger.Error("failed to re-enqueue job for retry", "job_id", id, "error", err)
+			ok, resErr := w.repo.RescheduleRetry(ctx, id, w.retryReenqueueDelay)
+			if resErr != nil {
+				w.logger.Error("failed to reschedule retry after enqueue failure", "job_id", id, "error", resErr)
+			}
+			if !ok {
+				w.logger.Warn("retry reschedule was not applied", "job_id", id)
+			}
+			continue
+		}
+		w.logger.Info("dispatched job for retry", "job_id", id)
+	}
 	return nil
 }
