@@ -33,6 +33,14 @@ Reason:
 - avoids duplicated re-dispatch under concurrent dispatchers
 - preserves recoverability on transport failure
 
+### Retry runtime config contract
+Expose retry runtime settings as worker env/config values:
+- `RETRY_DELAY`
+- `RETRY_DISPATCH_INTERVAL`
+- `RETRY_DISPATCH_BATCH_SIZE`
+- `RETRY_REENQUEUE_DELAY`
+Each value must be validated at startup (`duration > 0`, `batch_size > 0`) so misconfiguration fails fast.
+
 ## Deferred decisions
 - visibility timeout and stale `processing` recovery (Phase 04)
 - dead-letter policy (later phase)

@@ -8,15 +8,19 @@ import (
 )
 
 type WorkerConfig struct {
-	DatabaseURL        string
-	RedisAddr          string
-	RedisPassword      string
-	RedisDB            int
-	RedisQueueKey      string
-	RedisBlockTimeout  time.Duration
-	ShutdownTimeout    time.Duration
-	ProcessorFailJobID string
-	LogLevel           string
+	DatabaseURL            string
+	RedisAddr              string
+	RedisPassword          string
+	RedisDB                int
+	RedisQueueKey          string
+	RedisBlockTimeout      time.Duration
+	RetryDelay             time.Duration
+	RetryDispatchInterval  time.Duration
+	RetryDispatchBatchSize int
+	RetryReenqueueDelay    time.Duration
+	ShutdownTimeout        time.Duration
+	ProcessorFailJobID     string
+	LogLevel               string
 }
 
 func LoadWorkerConfig() (WorkerConfig, error) {
@@ -35,21 +39,45 @@ func LoadWorkerConfig() (WorkerConfig, error) {
 		return WorkerConfig{}, fmt.Errorf("REDIS_BLOCK_TIMEOUT: %w", err)
 	}
 
+	retryDelay, err := getEnvDuration("RETRY_DELAY", 30*time.Second)
+	if err != nil {
+		return WorkerConfig{}, fmt.Errorf("RETRY_DELAY: %w", err)
+	}
+
+	retryDispatchInterval, err := getEnvDuration("RETRY_DISPATCH_INTERVAL", 1*time.Minute)
+	if err != nil {
+		return WorkerConfig{}, fmt.Errorf("RETRY_DISPATCH_INTERVAL: %w", err)
+	}
+
+	retryDispatchBatchSize, err := getEnvInt("RETRY_DISPATCH_BATCH_SIZE", 10)
+	if err != nil {
+		return WorkerConfig{}, fmt.Errorf("RETRY_DISPATCH_BATCH_SIZE: %w", err)
+	}
+
+	retryReenqueueDelay, err := getEnvDuration("RETRY_REENQUEUE_DELAY", 1*time.Minute)
+	if err != nil {
+		return WorkerConfig{}, fmt.Errorf("RETRY_REENQUEUE_DELAY: %w", err)
+	}
+
 	shutdownTimeout, err := getEnvDuration("WORKER_SHUTDOWN_TIMEOUT", 10*time.Second)
 	if err != nil {
 		return WorkerConfig{}, fmt.Errorf("WORKER_SHUTDOWN_TIMEOUT: %w", err)
 	}
 
 	return WorkerConfig{
-		DatabaseURL:        dbURL,
-		RedisAddr:          getEnv("REDIS_ADDR", "localhost:6379"),
-		RedisPassword:      getEnv("REDIS_PASSWORD", ""),
-		RedisDB:            redisDB,
-		RedisQueueKey:      getEnv("REDIS_QUEUE_KEY", "jobs:queue"),
-		RedisBlockTimeout:  blockTimeout,
-		ShutdownTimeout:    shutdownTimeout,
-		ProcessorFailJobID: getEnv("PROCESSOR_FAIL_JOB_ID", ""),
-		LogLevel:           getEnv("LOG_LEVEL", "info"),
+		DatabaseURL:            dbURL,
+		RedisAddr:              getEnv("REDIS_ADDR", "localhost:6379"),
+		RedisPassword:          getEnv("REDIS_PASSWORD", ""),
+		RedisDB:                redisDB,
+		RedisQueueKey:          getEnv("REDIS_QUEUE_KEY", "jobs:queue"),
+		RedisBlockTimeout:      blockTimeout,
+		RetryDelay:             retryDelay,
+		RetryDispatchInterval:  retryDispatchInterval,
+		RetryDispatchBatchSize: retryDispatchBatchSize,
+		RetryReenqueueDelay:    retryReenqueueDelay,
+		ShutdownTimeout:        shutdownTimeout,
+		ProcessorFailJobID:     getEnv("PROCESSOR_FAIL_JOB_ID", ""),
+		LogLevel:               getEnv("LOG_LEVEL", "info"),
 	}, nil
 }
 

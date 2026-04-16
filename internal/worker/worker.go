@@ -27,6 +27,13 @@ type Worker struct {
 	retryReenqueueDelay         time.Duration
 }
 
+type RetryRuntimeConfig struct {
+	RetryDelay        time.Duration
+	DispatchInterval  time.Duration
+	DispatchBatchSize int
+	ReenqueueDelay    time.Duration
+}
+
 func NewWorker(repo jobs.Repository, queue queue.Queue, processor Processor, logger *slog.Logger) *Worker {
 	if repo == nil {
 		panic("jobs repository is required")
@@ -50,6 +57,27 @@ func NewWorker(repo jobs.Repository, queue queue.Queue, processor Processor, log
 		retryDispatchBatchSize:      defaultRetryDispatchBatchSize,
 		retryReenqueueDelay:         defaultRetryReenqueueDelay,
 	}
+}
+
+func (w *Worker) SetRetryRuntimeConfig(cfg RetryRuntimeConfig) error {
+	if cfg.RetryDelay <= 0 {
+		return errors.New("retry delay must be greater than zero")
+	}
+	if cfg.DispatchInterval <= 0 {
+		return errors.New("retry dispatch interval must be greater than zero")
+	}
+	if cfg.DispatchBatchSize <= 0 {
+		return errors.New("retry dispatch batch size must be greater than zero")
+	}
+	if cfg.ReenqueueDelay <= 0 {
+		return errors.New("retry reenqueue delay must be greater than zero")
+	}
+
+	w.processingFailureRetryDelay = cfg.RetryDelay
+	w.retryDispatchInterval = cfg.DispatchInterval
+	w.retryDispatchBatchSize = cfg.DispatchBatchSize
+	w.retryReenqueueDelay = cfg.ReenqueueDelay
+	return nil
 }
 
 func (w *Worker) Run(ctx context.Context) {

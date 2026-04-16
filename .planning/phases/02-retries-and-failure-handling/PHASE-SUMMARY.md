@@ -2,7 +2,7 @@
 
 ## Outcome
 Phase 02 is in progress.
-Current status: repository-layer retry foundation, worker processing failure migration, and worker retry dispatcher loop are implemented; config wiring and full UAT evidence are still pending.
+Current status: repository-layer retry foundation, worker processing failure migration, worker retry dispatcher loop, and retry runtime config wiring are implemented; full UAT evidence is still pending.
 
 ## What is finalized
 - phase scope and acceptance criteria
@@ -34,12 +34,22 @@ Current status: repository-layer retry foundation, worker processing failure mig
   - `TestDispatchDueRetries_EnqueueFailure_Reschedules`
   - `TestDispatchDueRetries_ClaimDueRetriesError_ReturnsErrorAndSkipsEnqueue`
   - `TestRunRetryDispatcher_DispatchesImmediatelyOnStart`
+- worker runtime retry config wiring added:
+  - `RETRY_DELAY`
+  - `RETRY_DISPATCH_INTERVAL`
+  - `RETRY_DISPATCH_BATCH_SIZE`
+  - `RETRY_REENQUEUE_DELAY`
+  - applied in `cmd/worker` via `SetRetryRuntimeConfig`
+  - config parsing tests added in `internal/config/config_test.go`
+  - worker runtime config validation tests added in `internal/worker/worker_test.go`
 
 ## Validation run
 - `go test ./internal/jobs/postgres ./internal/worker ./internal/httpapi` passed
+- `go test ./internal/config ./internal/worker` passed
+- `go test ./...` passed
+- `go vet ./...` passed
 
 ## What is pending implementation
-- worker runtime config wiring for retry timings and dispatcher batch size
 - full phase UAT evidence capture (manual/end-to-end checklist completion)
 
 ## Pairing mode

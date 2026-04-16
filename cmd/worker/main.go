@@ -81,6 +81,14 @@ func run(ctx context.Context, cfg config.WorkerConfig) error {
 	q := redisqueue.NewQueue(redisClient, cfg.RedisQueueKey, cfg.RedisBlockTimeout)
 	processor := &worker.DeterministicProcessor{FailJobID: cfg.ProcessorFailJobID}
 	w := worker.NewWorker(repo, q, processor, logger)
+	if err := w.SetRetryRuntimeConfig(worker.RetryRuntimeConfig{
+		RetryDelay:        cfg.RetryDelay,
+		DispatchInterval:  cfg.RetryDispatchInterval,
+		DispatchBatchSize: cfg.RetryDispatchBatchSize,
+		ReenqueueDelay:    cfg.RetryReenqueueDelay,
+	}); err != nil {
+		return fmt.Errorf("configure worker retry runtime: %w", err)
+	}
 
 	w.Run(ctx)
 	return nil

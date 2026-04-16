@@ -30,14 +30,16 @@ Validate retry lifecycle behavior end-to-end for transient and terminal failures
 
 ## Command validation
 - [x] `go test ./internal/jobs/postgres ./internal/worker ./internal/httpapi`
-- [ ] `go test ./...`
-- [ ] `go vet ./...`
+- [x] `go test ./...`
+- [x] `go vet ./...`
 
 ## Automated evidence captured
 - [x] worker dispatcher claims and enqueues due retries (`TestDispatchDueRetries_ClaimsAndEnqueues`)
 - [x] worker dispatcher reschedules on enqueue failure (`TestDispatchDueRetries_EnqueueFailure_Reschedules`)
 - [x] worker dispatcher returns claim errors without enqueue attempts (`TestDispatchDueRetries_ClaimDueRetriesError_ReturnsErrorAndSkipsEnqueue`)
 - [x] worker dispatcher performs immediate dispatch on startup (`TestRunRetryDispatcher_DispatchesImmediatelyOnStart`)
+- [x] worker retry runtime env parsing is covered (`internal/config/config_test.go`)
+- [x] worker retry runtime config validation/application is covered (`TestSetRetryRuntimeConfig_*`)
 
 ## Manual verification
 - [ ] run local API + worker + Postgres + Redis and capture retry cycle evidence

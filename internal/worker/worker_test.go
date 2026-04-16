@@ -34,15 +34,15 @@ type fakeRepo struct {
 	claimDueRetriesCalls         int
 	rescheduleRetryCalls         int
 
-	lastGetByIDID          uuid.UUID
-	lastMarkProcessingID   uuid.UUID
-	lastMarkCompletedID    uuid.UUID
-	lastMarkCompletedRes   json.RawMessage
-	lastMarkFailedID       uuid.UUID
-	lastMarkFailedErr      string
-	lastHandleFailureID    uuid.UUID
-	lastHandleFailureErr   string
-	lastHandleFailureDelay time.Duration
+	lastGetByIDID            uuid.UUID
+	lastMarkProcessingID     uuid.UUID
+	lastMarkCompletedID      uuid.UUID
+	lastMarkCompletedRes     json.RawMessage
+	lastMarkFailedID         uuid.UUID
+	lastMarkFailedErr        string
+	lastHandleFailureID      uuid.UUID
+	lastHandleFailureErr     string
+	lastHandleFailureDelay   time.Duration
 	lastClaimDueRetriesNow   time.Time
 	lastClaimDueRetriesLimit int
 	lastRescheduleRetryID    uuid.UUID
@@ -585,5 +585,93 @@ func TestDeterministicProcessor_FailJobID(t *testing.T) {
 
 	if got := err.Error(); got != "injected processor failure for UAT" {
 		t.Fatalf("unexpected error: %q", got)
+	}
+}
+
+func TestSetRetryRuntimeConfig_AppliesValues(t *testing.T) {
+	repo := &fakeRepo{}
+	q := &fakeQueue{}
+	processor := &fakeProcessor{}
+	worker := newTestWorker(repo, q, processor)
+
+	cfg := RetryRuntimeConfig{
+		RetryDelay:        45 * time.Second,
+		DispatchInterval:  20 * time.Second,
+		DispatchBatchSize: 12,
+		ReenqueueDelay:    15 * time.Second,
+	}
+
+	if err := worker.SetRetryRuntimeConfig(cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if worker.processingFailureRetryDelay != cfg.RetryDelay {
+		t.Fatalf("unexpected processing retry delay: got %s want %s", worker.processingFailureRetryDelay, cfg.RetryDelay)
+	}
+	if worker.retryDispatchInterval != cfg.DispatchInterval {
+		t.Fatalf("unexpected dispatch interval: got %s want %s", worker.retryDispatchInterval, cfg.DispatchInterval)
+	}
+	if worker.retryDispatchBatchSize != cfg.DispatchBatchSize {
+		t.Fatalf("unexpected dispatch batch size: got %d want %d", worker.retryDispatchBatchSize, cfg.DispatchBatchSize)
+	}
+	if worker.retryReenqueueDelay != cfg.ReenqueueDelay {
+		t.Fatalf("unexpected reenqueue delay: got %s want %s", worker.retryReenqueueDelay, cfg.ReenqueueDelay)
+	}
+}
+
+func TestSetRetryRuntimeConfig_InvalidValues(t *testing.T) {
+	repo := &fakeRepo{}
+	q := &fakeQueue{}
+	processor := &fakeProcessor{}
+
+	testCases := []struct {
+		name string
+		cfg  RetryRuntimeConfig
+	}{
+		{
+			name: "retry delay <= 0",
+			cfg: RetryRuntimeConfig{
+				RetryDelay:        0,
+				DispatchInterval:  time.Second,
+				DispatchBatchSize: 1,
+				ReenqueueDelay:    time.Second,
+			},
+		},
+		{
+			name: "dispatch interval <= 0",
+			cfg: RetryRuntimeConfig{
+				RetryDelay:        time.Second,
+				DispatchInterval:  0,
+				DispatchBatchSize: 1,
+				ReenqueueDelay:    time.Second,
+			},
+		},
+		{
+			name: "dispatch batch size <= 0",
+			cfg: RetryRuntimeConfig{
+				RetryDelay:        time.Second,
+				DispatchInterval:  time.Second,
+				DispatchBatchSize: 0,
+				ReenqueueDelay:    time.Second,
+			},
+		},
+		{
+			name: "reenqueue delay <= 0",
+			cfg: RetryRuntimeConfig{
+				RetryDelay:        time.Second,
+				DispatchInterval:  time.Second,
+				DispatchBatchSize: 1,
+				ReenqueueDelay:    0,
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			worker := newTestWorker(repo, q, processor)
+			if err := worker.SetRetryRuntimeConfig(tc.cfg); err == nil {
+				t.Fatal("expected error, got nil")
+			}
+		})
 	}
 }

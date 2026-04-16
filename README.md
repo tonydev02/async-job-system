@@ -68,12 +68,16 @@ Implemented:
 - due retry claiming + re-dispatch loop in worker
 - immediate retry dispatch on worker startup
 - enqueue-failure safety (`RescheduleRetry`) so retries are not dropped
+- retry runtime config/env wiring:
+  - `RETRY_DELAY`
+  - `RETRY_DISPATCH_INTERVAL`
+  - `RETRY_DISPATCH_BATCH_SIZE`
+  - `RETRY_REENQUEUE_DELAY`
 - targeted worker tests for dispatcher behavior
 
 Pending:
 
-- retry runtime config wiring (`RETRY_DELAY`, `RETRY_DISPATCH_INTERVAL`, `RETRY_DISPATCH_BATCH_SIZE`, `RETRY_REENQUEUE_DELAY`)
-- full phase closeout validation (`go test ./...`, `go vet ./...`) and manual UAT evidence
+- manual phase UAT evidence capture (local end-to-end run artifacts)
 
 ## Project Structure
 
