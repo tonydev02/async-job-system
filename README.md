@@ -1,6 +1,8 @@
 # Async Job Processing System (Go)
 
-Production-style async job system built to demonstrate backend engineering fundamentals:
+A small async job system in Go with a focus on reliability and operational clarity.
+
+Core goals:
 
 - queue-based workflows
 - explicit job lifecycle persistence
@@ -8,15 +10,15 @@ Production-style async job system built to demonstrate backend engineering funda
 - worker reliability under duplicate delivery
 - operationally useful logs and testable design
 
-## Why This Project
+## What This Project Focuses On
 
-Many toy async systems stop at "enqueue + background worker." This project focuses on the harder parts interviewers care about:
+This is intentionally not a feature-heavy system. The emphasis is on correctness and clear behavior under failure:
 
 - source of truth boundaries (`Postgres` vs `Redis`)
 - idempotency and duplicate-delivery safety
 - state-machine-like transitions instead of ad hoc flags
 - recovery-oriented retry dispatch
-- clear, reviewable architecture over framework-heavy abstractions
+- explicit, reviewable code over heavy abstractions
 
 ## Architecture
 
@@ -151,10 +153,12 @@ curl -i http://localhost:8080/jobs/<job_id>
 
 ## Testing
 
-Targeted packages:
+Main validation commands:
 
 ```bash
 go test ./internal/jobs/postgres ./internal/worker ./internal/httpapi
+go test ./...
+go vet ./...
 ```
 
 Worker tests include dispatcher coverage:
@@ -164,10 +168,11 @@ Worker tests include dispatcher coverage:
 - claim error path
 - immediate dispatch on startup
 
-## Interview Talking Points
+## Notes
 
-- Explicitly separated truth (`Postgres`) from transport (`Redis`).
-- Designed transitions for correctness first, scale later.
-- Used small interfaces and constructor injection for testability.
-- Added operational safeguards for real-world failures (duplicate delivery, transient queue errors, graceful shutdown).
-- Kept implementation intentionally simple and evolvable (no premature orchestration complexity).
+- API and worker are separately runnable.
+- Retry timing is configurable via:
+  - `RETRY_DELAY`
+  - `RETRY_DISPATCH_INTERVAL`
+  - `RETRY_DISPATCH_BATCH_SIZE`
+  - `RETRY_REENQUEUE_DELAY`
