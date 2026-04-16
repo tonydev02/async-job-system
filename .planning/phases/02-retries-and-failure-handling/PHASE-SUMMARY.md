@@ -1,8 +1,8 @@
 # PHASE-SUMMARY.md
 
 ## Outcome
-Phase 02 is in progress.
-Current status: repository-layer retry foundation, worker processing failure migration, worker retry dispatcher loop, and retry runtime config wiring are implemented; full UAT evidence is still pending.
+Phase 02 is complete.
+Current status: bounded retries, terminal failure handling, retry dispatcher flow, enqueue-failure safety, and retry runtime configuration are implemented and validated by automated tests.
 
 ## What is finalized
 - phase scope and acceptance criteria
@@ -42,6 +42,15 @@ Current status: repository-layer retry foundation, worker processing failure mig
   - applied in `cmd/worker` via `SetRetryRuntimeConfig`
   - config parsing tests added in `internal/config/config_test.go`
   - worker runtime config validation tests added in `internal/worker/worker_test.go`
+- reliability hardening updates:
+  - API enqueue failure now triggers retry reschedule to avoid stranded pending rows
+  - retry delay SQL now preserves sub-second precision
+  - config loader now validates retry env values are positive
+- additional phase-closure tests:
+  - `TestRepositoryHandleProcessingFailure_SchedulesRetryBeforeMaxAttempts`
+  - `TestRepositoryHandleProcessingFailure_MarksTerminalAtMaxAttempts`
+  - `TestRepositoryClaimDueRetries_ClearsNextRunAtOnClaim`
+  - `TestGetJobByID_IncludesRetryMetadataFields`
 
 ## Validation run
 - `go test ./internal/jobs/postgres ./internal/worker ./internal/httpapi` passed
@@ -50,7 +59,10 @@ Current status: repository-layer retry foundation, worker processing failure mig
 - `go vet ./...` passed
 
 ## What is pending implementation
-- full phase UAT evidence capture (manual/end-to-end checklist completion)
+- none for Phase 02 scope
+
+## Residual follow-up (non-gating)
+- optional local manual smoke run with live Postgres + Redis for log artifact capture
 
 ## Pairing mode
 Implementation will proceed in guided subtasks:

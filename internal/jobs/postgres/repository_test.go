@@ -208,6 +208,104 @@ func TestRepositoryProcessingToFailed(t *testing.T) {
 	}
 }
 
+func TestRepositoryHandleProcessingFailure_SchedulesRetryBeforeMaxAttempts(t *testing.T) {
+	db := setupDBWithJobsTable(t)
+	repo := postgres.NewRepository(db)
+
+	created, err := repo.Create(context.Background(), jobs.CreateParams{
+		Payload:     json.RawMessage(`{"task":"retry-first-failure"}`),
+		MaxAttempts: 3,
+	})
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+
+	ok, err := repo.MarkProcessing(context.Background(), created.ID)
+	if err != nil || !ok {
+		t.Fatalf("mark processing: ok=%v err=%v", ok, err)
+	}
+
+	transition, err := repo.HandleProcessingFailure(context.Background(), created.ID, "temporary network issue", 2*time.Second)
+	if err != nil {
+		t.Fatalf("handle processing failure: %v", err)
+	}
+	if !transition.Applied {
+		t.Fatal("expected failure transition to be applied")
+	}
+	if transition.Decision != jobs.FailureDecisionRetry {
+		t.Fatalf("expected retry decision, got %s", transition.Decision)
+	}
+	if transition.NextRunAt == nil {
+		t.Fatal("expected next_run_at for retry decision")
+	}
+
+	fetched, err := repo.GetByID(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("get job by id: %v", err)
+	}
+	if fetched.Status != jobs.StatusPending {
+		t.Fatalf("expected status pending after retry transition, got %s", fetched.Status)
+	}
+	if fetched.Attempt != 1 {
+		t.Fatalf("expected attempt to be incremented to 1, got %d", fetched.Attempt)
+	}
+	if fetched.Error == nil || *fetched.Error != "temporary network issue" {
+		t.Fatalf("expected persisted error text, got %v", fetched.Error)
+	}
+	if fetched.NextRunAt == nil {
+		t.Fatal("expected next_run_at to be set")
+	}
+	if fetched.CompletedAt != nil {
+		t.Fatal("expected completed_at to be nil for retry transition")
+	}
+}
+
+func TestRepositoryHandleProcessingFailure_MarksTerminalAtMaxAttempts(t *testing.T) {
+	db := setupDBWithJobsTable(t)
+	repo := postgres.NewRepository(db)
+
+	created, err := repo.Create(context.Background(), jobs.CreateParams{
+		Payload:     json.RawMessage(`{"task":"terminal-failure"}`),
+		MaxAttempts: 1,
+	})
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+
+	ok, err := repo.MarkProcessing(context.Background(), created.ID)
+	if err != nil || !ok {
+		t.Fatalf("mark processing: ok=%v err=%v", ok, err)
+	}
+
+	transition, err := repo.HandleProcessingFailure(context.Background(), created.ID, "permanent failure", 2*time.Second)
+	if err != nil {
+		t.Fatalf("handle processing failure: %v", err)
+	}
+	if !transition.Applied {
+		t.Fatal("expected failure transition to be applied")
+	}
+	if transition.Decision != jobs.FailureDecisionTerminal {
+		t.Fatalf("expected terminal decision, got %s", transition.Decision)
+	}
+	if transition.NextRunAt != nil {
+		t.Fatalf("expected next_run_at nil for terminal decision, got %v", *transition.NextRunAt)
+	}
+
+	fetched, err := repo.GetByID(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("get job by id: %v", err)
+	}
+	if fetched.Status != jobs.StatusFailed {
+		t.Fatalf("expected status failed, got %s", fetched.Status)
+	}
+	if fetched.CompletedAt == nil {
+		t.Fatal("expected completed_at to be set for terminal failure")
+	}
+	if fetched.NextRunAt != nil {
+		t.Fatalf("expected next_run_at to be nil for terminal failure, got %v", *fetched.NextRunAt)
+	}
+}
+
 func TestRepositoryRetrySchedulingPreservesSubSecondDelay(t *testing.T) {
 	db := setupDBWithJobsTable(t)
 	repo := postgres.NewRepository(db)
@@ -253,6 +351,40 @@ func TestRepositoryRetrySchedulingPreservesSubSecondDelay(t *testing.T) {
 	}
 	if fetched.NextRunAt.Before(beforeReschedule.Add(100 * time.Millisecond)) {
 		t.Fatalf("expected sub-second reschedule to be preserved, got next_run_at=%v", *fetched.NextRunAt)
+	}
+}
+
+func TestRepositoryClaimDueRetries_ClearsNextRunAtOnClaim(t *testing.T) {
+	db := setupDBWithJobsTable(t)
+	repo := postgres.NewRepository(db)
+
+	created, err := repo.Create(context.Background(), jobs.CreateParams{Payload: json.RawMessage(`{"task":"claim-clear-next-run-at"}`)})
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+
+	ok, err := repo.RescheduleRetry(context.Background(), created.ID, 100*time.Millisecond)
+	if err != nil {
+		t.Fatalf("reschedule retry: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected reschedule retry to apply")
+	}
+
+	claimedIDs, err := repo.ClaimDueRetries(context.Background(), time.Now().Add(2*time.Second), 10)
+	if err != nil {
+		t.Fatalf("claim due retries: %v", err)
+	}
+	if len(claimedIDs) != 1 || claimedIDs[0] != created.ID {
+		t.Fatalf("unexpected claimed ids: %#v", claimedIDs)
+	}
+
+	fetched, err := repo.GetByID(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("get job by id: %v", err)
+	}
+	if fetched.NextRunAt != nil {
+		t.Fatalf("expected next_run_at to be cleared during claim, got %v", *fetched.NextRunAt)
 	}
 }
 

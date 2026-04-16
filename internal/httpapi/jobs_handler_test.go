@@ -229,3 +229,59 @@ func TestGetJobByIDNotFound(t *testing.T) {
 		t.Fatalf("expected error body to contain %q, got %q", "job not found", rec.Body.String())
 	}
 }
+
+func TestGetJobByID_IncludesRetryMetadataFields(t *testing.T) {
+	jobID := uuid.New()
+	errText := "processor failed once"
+	nextRunAt := time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC)
+	createdAt := time.Date(2026, 4, 16, 9, 0, 0, 0, time.UTC)
+	updatedAt := createdAt.Add(30 * time.Second)
+
+	repo := &fakeRepo{
+		getByIDFn: func(_ context.Context, id uuid.UUID) (jobs.Job, error) {
+			if id != jobID {
+				t.Fatalf("unexpected id: got %s want %s", id, jobID)
+			}
+			return jobs.Job{
+				ID:          jobID,
+				Status:      jobs.StatusPending,
+				Payload:     json.RawMessage(`{"task":"email"}`),
+				Error:       &errText,
+				Attempt:     1,
+				MaxAttempts: 3,
+				NextRunAt:   &nextRunAt,
+				CreatedAt:   createdAt,
+				UpdatedAt:   updatedAt,
+			}, nil
+		},
+	}
+
+	handler := NewJobsHandler(repo, &fakeQueue{})
+	router := NewRouter(handler)
+
+	req := httptest.NewRequest(http.MethodGet, "/jobs/"+jobID.String(), nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if got := resp["attempt"]; int(got.(float64)) != 1 {
+		t.Fatalf("expected attempt 1, got %#v", got)
+	}
+	if got := resp["max_attempts"]; int(got.(float64)) != 3 {
+		t.Fatalf("expected max_attempts 3, got %#v", got)
+	}
+	if got := resp["next_run_at"]; got != nextRunAt.Format(time.RFC3339) {
+		t.Fatalf("expected next_run_at %q, got %#v", nextRunAt.Format(time.RFC3339), got)
+	}
+	if got := resp["error"]; got != errText {
+		t.Fatalf("expected error %q, got %#v", errText, got)
+	}
+}

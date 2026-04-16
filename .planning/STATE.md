@@ -7,7 +7,7 @@ Async Job Processing System
 02 — Retries and Failure Handling
 
 ## Current status
-in progress; repository-layer retry foundation, worker failure-transition migration, worker retry dispatcher loop, and retry runtime config wiring are implemented; remaining work is phase UAT evidence capture
+Phase 02 complete; bounded retries, terminal failure transitions, retry dispatch loop, enqueue-failure reschedule safety, and retry runtime config wiring are implemented and validated by automated coverage.
 
 ## Objective
 Implement bounded retries and explicit terminal failure handling while preserving Postgres as the source of truth for lifecycle transitions.
@@ -44,11 +44,20 @@ Implement bounded retries and explicit terminal failure handling while preservin
   - `RETRY_DISPATCH_INTERVAL`
   - `RETRY_DISPATCH_BATCH_SIZE`
   - `RETRY_REENQUEUE_DELAY`
+- phase-closure reliability hardening completed:
+  - API enqueue failure path now re-schedules retry to avoid stranded pending jobs
+  - retry scheduling SQL preserves sub-second delay precision
+  - retry env config values are validated as positive during config load
+- phase-closure acceptance tests added:
+  - retry-before-max transition coverage
+  - terminal-at-max transition coverage
+  - due-retry claim clears `next_run_at` coverage
+  - API retry metadata visibility coverage
 - current local validation: `go test ./internal/jobs/postgres ./internal/worker ./internal/httpapi` passes
+- full validation: `go test ./...` and `go vet ./...` pass
 
 ## Next milestone
-implement remaining Phase 02 runtime work:
-- complete phase-02 UAT evidence capture for manual/end-to-end checklist
+start Phase 03 planning and scope definition
 
 ## Risks / open questions
 - visibility-timeout and stuck-`processing` recovery remain deferred to Phase 04
