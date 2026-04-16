@@ -43,20 +43,32 @@ func LoadWorkerConfig() (WorkerConfig, error) {
 	if err != nil {
 		return WorkerConfig{}, fmt.Errorf("RETRY_DELAY: %w", err)
 	}
+	if retryDelay <= 0 {
+		return WorkerConfig{}, fmt.Errorf("RETRY_DELAY must be greater than zero")
+	}
 
 	retryDispatchInterval, err := getEnvDuration("RETRY_DISPATCH_INTERVAL", 1*time.Minute)
 	if err != nil {
 		return WorkerConfig{}, fmt.Errorf("RETRY_DISPATCH_INTERVAL: %w", err)
+	}
+	if retryDispatchInterval <= 0 {
+		return WorkerConfig{}, fmt.Errorf("RETRY_DISPATCH_INTERVAL must be greater than zero")
 	}
 
 	retryDispatchBatchSize, err := getEnvInt("RETRY_DISPATCH_BATCH_SIZE", 10)
 	if err != nil {
 		return WorkerConfig{}, fmt.Errorf("RETRY_DISPATCH_BATCH_SIZE: %w", err)
 	}
+	if retryDispatchBatchSize <= 0 {
+		return WorkerConfig{}, fmt.Errorf("RETRY_DISPATCH_BATCH_SIZE must be greater than zero")
+	}
 
 	retryReenqueueDelay, err := getEnvDuration("RETRY_REENQUEUE_DELAY", 1*time.Minute)
 	if err != nil {
 		return WorkerConfig{}, fmt.Errorf("RETRY_REENQUEUE_DELAY: %w", err)
+	}
+	if retryReenqueueDelay <= 0 {
+		return WorkerConfig{}, fmt.Errorf("RETRY_REENQUEUE_DELAY must be greater than zero")
 	}
 
 	shutdownTimeout, err := getEnvDuration("WORKER_SHUTDOWN_TIMEOUT", 10*time.Second)

@@ -18,8 +18,13 @@ import (
 )
 
 type fakeRepo struct {
-	createFn  func(ctx context.Context, params jobs.CreateParams) (jobs.Job, error)
-	getByIDFn func(ctx context.Context, id uuid.UUID) (jobs.Job, error)
+	createFn          func(ctx context.Context, params jobs.CreateParams) (jobs.Job, error)
+	getByIDFn         func(ctx context.Context, id uuid.UUID) (jobs.Job, error)
+	rescheduleRetryFn func(ctx context.Context, id uuid.UUID, delay time.Duration) (bool, error)
+
+	rescheduleRetryCalls int
+	lastRescheduleID     uuid.UUID
+	lastRescheduleDelay  time.Duration
 }
 
 type fakeQueue struct {
@@ -61,8 +66,14 @@ func (f *fakeRepo) ClaimDueRetries(context.Context, time.Time, int) ([]uuid.UUID
 	return nil, nil
 }
 
-func (f *fakeRepo) RescheduleRetry(context.Context, uuid.UUID, time.Duration) (bool, error) {
-	return false, nil
+func (f *fakeRepo) RescheduleRetry(ctx context.Context, id uuid.UUID, delay time.Duration) (bool, error) {
+	f.rescheduleRetryCalls++
+	f.lastRescheduleID = id
+	f.lastRescheduleDelay = delay
+	if f.rescheduleRetryFn != nil {
+		return f.rescheduleRetryFn(ctx, id, delay)
+	}
+	return true, nil
 }
 
 func (f *fakeQueue) Enqueue(ctx context.Context, msg queue.Message) error {
@@ -150,12 +161,22 @@ func TestPostJobsSuccess(t *testing.T) {
 	}
 }
 func TestPostJobsEnqueueFailure(t *testing.T) {
+	expectedID := uuid.New()
 	repo := &fakeRepo{
 		createFn: func(_ context.Context, params jobs.CreateParams) (jobs.Job, error) {
 			return jobs.Job{
-				ID:     uuid.New(),
+				ID:     expectedID,
 				Status: jobs.StatusPending,
 			}, nil
+		},
+		rescheduleRetryFn: func(_ context.Context, id uuid.UUID, delay time.Duration) (bool, error) {
+			if id != expectedID {
+				t.Fatalf("unexpected reschedule id: got %s want %s", id, expectedID)
+			}
+			if delay != enqueueFailureRescheduleDelay {
+				t.Fatalf("unexpected reschedule delay: got %s want %s", delay, enqueueFailureRescheduleDelay)
+			}
+			return true, nil
 		},
 	}
 
@@ -178,6 +199,9 @@ func TestPostJobsEnqueueFailure(t *testing.T) {
 
 	if !strings.Contains(rec.Body.String(), "failed to enqueue job") {
 		t.Fatalf("expected error body to contain %q, got %q", "failed to enqueue job", rec.Body.String())
+	}
+	if repo.rescheduleRetryCalls != 1 {
+		t.Fatalf("expected RescheduleRetry to be called once, got %d", repo.rescheduleRetryCalls)
 	}
 }
 

@@ -76,3 +76,28 @@ func TestLoadWorkerConfig_InvalidRetryDelay(t *testing.T) {
 		t.Fatal("expected error, got nil")
 	}
 }
+
+func TestLoadWorkerConfig_NonPositiveRetryValues(t *testing.T) {
+	testCases := []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{name: "retry delay zero", key: "RETRY_DELAY", value: "0s"},
+		{name: "retry dispatch interval negative", key: "RETRY_DISPATCH_INTERVAL", value: "-1s"},
+		{name: "retry dispatch batch size zero", key: "RETRY_DISPATCH_BATCH_SIZE", value: "0"},
+		{name: "retry reenqueue delay zero", key: "RETRY_REENQUEUE_DELAY", value: "0s"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/async_jobs?sslmode=disable")
+			t.Setenv(tc.key, tc.value)
+
+			_, err := LoadWorkerConfig()
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+		})
+	}
+}

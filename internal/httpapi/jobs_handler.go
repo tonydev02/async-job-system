@@ -18,6 +18,8 @@ type JobsHandler struct {
 	queue queue.Queue
 }
 
+const enqueueFailureRescheduleDelay = 5 * time.Second
+
 type createJobRequest struct {
 	Payload json.RawMessage `json:"payload"`
 }
@@ -71,6 +73,15 @@ func (h *JobsHandler) CreateJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.queue.Enqueue(r.Context(), queue.Message{JobID: job.ID}); err != nil {
+		ok, rescheduleErr := h.repo.RescheduleRetry(r.Context(), job.ID, enqueueFailureRescheduleDelay)
+		if rescheduleErr != nil {
+			http.Error(w, "failed to enqueue job", http.StatusServiceUnavailable)
+			return
+		}
+		if !ok {
+			http.Error(w, "failed to enqueue job", http.StatusServiceUnavailable)
+			return
+		}
 		http.Error(w, "failed to enqueue job", http.StatusServiceUnavailable)
 		return
 	}

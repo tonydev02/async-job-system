@@ -146,7 +146,7 @@ func (r *Repository) HandleProcessingFailure(ctx context.Context, id uuid.UUID, 
 		error = $4,
 		next_run_at = CASE
 			WHEN attempt >= max_attempts THEN NULL
-			ELSE now() + ($5 || ' seconds')::interval
+			ELSE now() + make_interval(secs => $5)
 		END,
 		completed_at = CASE
 			WHEN attempt >= max_attempts THEN now()
@@ -171,7 +171,7 @@ func (r *Repository) HandleProcessingFailure(ctx context.Context, id uuid.UUID, 
 		jobs.StatusFailed,
 		jobs.StatusPending,
 		errMsg,
-		int(retryDelay.Seconds()),
+		retryDelay.Seconds(),
 		jobs.StatusProcessing,
 	).Scan(&attempt, &maxAttempts, &status, &nextRunAt)
 	if err != nil {
@@ -254,7 +254,7 @@ func (r *Repository) RescheduleRetry(ctx context.Context, id uuid.UUID, delay ti
 	query := `
 		UPDATE jobs
 		SET 
-			next_run_at = now() + ($2 * interval '1 second'),
+			next_run_at = now() + make_interval(secs => $2),
 			updated_at = now()
 		WHERE id = $1 
 			AND status = $3
@@ -266,7 +266,7 @@ func (r *Repository) RescheduleRetry(ctx context.Context, id uuid.UUID, delay ti
 		ctx,
 		query,
 		id,
-		int(delay.Seconds()),
+		delay.Seconds(),
 		jobs.StatusPending,
 	).Scan(&returnedID)
 

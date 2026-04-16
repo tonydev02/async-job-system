@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
@@ -204,6 +205,54 @@ func TestRepositoryProcessingToFailed(t *testing.T) {
 	}
 	if fetched.CompletedAt == nil {
 		t.Fatal("expected completed_at to be set")
+	}
+}
+
+func TestRepositoryRetrySchedulingPreservesSubSecondDelay(t *testing.T) {
+	db := setupDBWithJobsTable(t)
+	repo := postgres.NewRepository(db)
+
+	created, err := repo.Create(context.Background(), jobs.CreateParams{Payload: json.RawMessage(`{"task":"retry-precision"}`)})
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+
+	ok, err := repo.MarkProcessing(context.Background(), created.ID)
+	if err != nil || !ok {
+		t.Fatalf("mark processing: ok=%v err=%v", ok, err)
+	}
+
+	beforeFailureTransition := time.Now()
+	transition, err := repo.HandleProcessingFailure(context.Background(), created.ID, "transient error", 1500*time.Millisecond)
+	if err != nil {
+		t.Fatalf("handle processing failure: %v", err)
+	}
+	if !transition.Applied || transition.Decision != jobs.FailureDecisionRetry || transition.NextRunAt == nil {
+		t.Fatalf("unexpected transition result: %+v", transition)
+	}
+
+	if transition.NextRunAt.Before(beforeFailureTransition.Add(1200 * time.Millisecond)) {
+		t.Fatalf("expected next_run_at to preserve sub-second delay, got %v", transition.NextRunAt)
+	}
+
+	beforeReschedule := time.Now()
+	ok, err = repo.RescheduleRetry(context.Background(), created.ID, 250*time.Millisecond)
+	if err != nil {
+		t.Fatalf("reschedule retry: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected reschedule retry to apply")
+	}
+
+	fetched, err := repo.GetByID(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("get job by id: %v", err)
+	}
+	if fetched.NextRunAt == nil {
+		t.Fatal("expected next_run_at after reschedule")
+	}
+	if fetched.NextRunAt.Before(beforeReschedule.Add(100 * time.Millisecond)) {
+		t.Fatalf("expected sub-second reschedule to be preserved, got next_run_at=%v", *fetched.NextRunAt)
 	}
 }
 
