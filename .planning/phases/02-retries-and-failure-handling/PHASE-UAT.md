@@ -45,8 +45,20 @@ Validate retry lifecycle behavior end-to-end for transient and terminal failures
 - [x] due-retry claim clears `next_run_at` is covered (`TestRepositoryClaimDueRetries_ClearsNextRunAtOnClaim`)
 - [x] API retry metadata visibility is covered (`TestGetJobByID_IncludesRetryMetadataFields`)
 
-## Manual verification (non-gating smoke)
-- Local Redis/Postgres services are not running in this environment; phase closure is based on automated acceptance coverage and validation commands above.
-- [ ] run local API + worker + Postgres + Redis and capture retry cycle evidence
-- [ ] capture terminal-failure evidence after final attempt
-- [ ] capture dispatcher behavior evidence from worker logs
+## Manual verification
+- [x] run local API + worker + Postgres + Redis and capture retry cycle evidence
+- [x] capture terminal-failure evidence after final attempt
+- [x] capture dispatcher behavior evidence from worker logs
+
+### Manual evidence (2026-04-16 JST)
+- Infra used: Docker containers `ajs-postgres` (`127.0.0.1:55432`) and `ajs-redis` (`127.0.0.1:6379`), API `cmd/api-uat`, worker `cmd/worker`.
+- Retry scheduling evidence:
+  - Created job `4ed58245-c6a1-473e-86ab-995494fbba66`.
+  - Worker log: `job failure transitioned to retry ... attempt=1 max_attempts=3 next_run_at=2026-04-16T23:10:19...`.
+  - API `GET /jobs/{id}` showed `status=pending`, `attempt=1`, `next_run_at` populated, `error="injected processor failure for UAT"`.
+- Terminal failure evidence:
+  - Created job `9064dd9f-1061-4b72-8019-a7f2b7663893`, set `max_attempts=1`, ran worker with `PROCESSOR_FAIL_JOB_ID` for that job.
+  - Worker log: `job failure transitioned to terminal failed ... attempt=1 max_attempts=1`.
+  - API `GET /jobs/{id}` showed `status=failed`, `completed_at` set, `next_run_at=null`.
+- Dispatcher log evidence:
+  - Worker log included `dispatched job for retry job_id=4ed58245-c6a1-473e-86ab-995494fbba66`.

@@ -55,6 +55,7 @@ Implement bounded retries and explicit terminal failure handling while preservin
   - API retry metadata visibility coverage
 - current local validation: `go test ./internal/jobs/postgres ./internal/worker ./internal/httpapi` passes
 - full validation: `go test ./...` and `go vet ./...` pass
+- manual end-to-end verification completed on 2026-04-16 (JST) with Docker `ajs-postgres` + `ajs-redis`; retry scheduling, dispatcher redispatch logs, and terminal failure behavior were captured
 
 ## Next milestone
 start Phase 03 planning and scope definition

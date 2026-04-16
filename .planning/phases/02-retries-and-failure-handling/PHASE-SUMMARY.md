@@ -57,12 +57,13 @@ Current status: bounded retries, terminal failure handling, retry dispatcher flo
 - `go test ./internal/config ./internal/worker` passed
 - `go test ./...` passed
 - `go vet ./...` passed
+- manual end-to-end UAT smoke (2026-04-16 JST) passed using Docker `ajs-postgres` + `ajs-redis` with live API/worker runtime evidence captured in `PHASE-UAT.md`
 
 ## What is pending implementation
 - none for Phase 02 scope
 
 ## Residual follow-up (non-gating)
-- optional local manual smoke run with live Postgres + Redis for log artifact capture
+- none for Phase 02
 
 ## Pairing mode
 Implementation will proceed in guided subtasks:
