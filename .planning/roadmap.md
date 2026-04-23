@@ -1,9 +1,9 @@
 # Roadmap
 
 ## Current Snapshot
-- Current phase: `02-retries-and-failure-handling`
-- Status: in progress (repository-layer retry foundation implemented; worker/runtime integration pending)
-- Next phase: `03-concurrency-and-worker-safety`
+- Current phase: `03-concurrency-and-worker-safety`
+- Status: in progress (planning finalized; implementation pending)
+- Next phase: `04-visibility-timeout-and-recovery`
 
 ## Phase Map
 1. `01-mvp-job-submission`
@@ -12,11 +12,11 @@ Status: done.
 
 2. `02-retries-and-failure-handling`
 Goal: implement retry policy, bounded attempts, and explicit terminal failure behavior.
-Status: in progress.
+Status: done.
 
 3. `03-concurrency-and-worker-safety`
 Goal: harden duplicate delivery handling and multi-worker race safety.
-Status: planned.
+Status: in progress.
 
 4. `04-visibility-timeout-and-recovery`
 Goal: recover jobs stuck in `processing` after crashes/timeouts.
