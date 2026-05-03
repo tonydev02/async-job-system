@@ -11,8 +11,8 @@ Validate concurrency and worker-safety behavior under duplicate delivery and mul
 - [ ] verify duplicate attempts are skipped without duplicate terminal transitions
 
 ### 2. Bounded in-process concurrency
-- [ ] run worker with explicit `WORKER_CONCURRENCY`
-- [ ] verify active processing does not exceed configured bound
+- [x] run worker with explicit bounded worker count in runtime test configuration
+- [x] verify active processing does not exceed configured bound
 - [ ] verify throughput increases when concurrency is raised (sanity check)
 
 ### 3. Graceful shutdown drain
@@ -36,7 +36,7 @@ Validate concurrency and worker-safety behavior under duplicate delivery and mul
 
 ## Automated evidence captured
 - [ ] worker duplicate-delivery contention unit tests
-- [ ] worker bounded-concurrency unit tests
+- [x] worker bounded-concurrency unit tests
 - [ ] worker graceful-shutdown drain tests
 - [ ] repository concurrent transition tests
 - [ ] repository concurrent due-retry claim tests

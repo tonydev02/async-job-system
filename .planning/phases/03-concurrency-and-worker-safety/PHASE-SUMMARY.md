@@ -1,7 +1,7 @@
 # PHASE-SUMMARY.md
 
 ## Outcome
-Phase 03 implementation is now started with the worker runtime config slice completed.
+Phase 03 implementation is in progress with bounded in-process worker-pool runtime now implemented.
 
 ## What is finalized
 - phase scope, goals, non-goals, and acceptance criteria
@@ -20,9 +20,14 @@ Phase 03 implementation is now started with the worker runtime config slice comp
   - default `4`, override via env
   - fail-fast for non-positive values
 - worker entrypoint wires configured concurrency into worker runtime logger context
+- worker runtime bounded concurrency refactor:
+  - `internal/worker/worker.go` `Run` now uses a fixed-size in-process worker pool (no unbounded per-message goroutine creation)
+  - retry dispatcher startup behavior is preserved (`runRetryDispatcher` still starts from `Run`)
+- worker runtime tests expanded:
+  - bounded concurrency test asserts active processing does not exceed configured worker count
+  - `Run` test coverage now asserts retry dispatcher starts when worker runtime starts
 
 ## What is pending implementation
-- bounded worker pool refactor in `internal/worker`
 - shutdown drain behavior implementation + tests
 - contention/race integration tests in repository layer
 - README and operational docs updates reflecting finalized Phase 03 behavior

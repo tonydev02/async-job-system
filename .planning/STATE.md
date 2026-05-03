@@ -7,7 +7,7 @@ Async Job Processing System
 03 — Concurrency and Worker Safety
 
 ## Current status
-Phase 03 implementation started; worker runtime config slice is in progress.
+Phase 03 implementation in progress; bounded worker-pool runtime slice is complete, shutdown-drain and repository contention slices remain.
 
 ## Objective
 Harden duplicate-delivery handling and multi-worker race safety while preserving explicit DB-backed lifecycle transitions.
@@ -39,6 +39,10 @@ Harden duplicate-delivery handling and multi-worker race safety while preserving
   - `WORKER_CONCURRENCY` added to worker runtime config load/validation
   - default `4`, env override support, fail-fast on non-positive values
   - worker entrypoint now wires concurrency value into runtime logging context
+- Phase 03 worker runtime slice implemented:
+  - `internal/worker` `Run` now uses bounded in-process pool concurrency
+  - retry dispatcher startup behavior preserved from `Run`
+  - worker tests now cover bounded concurrency ceiling and dispatcher startup from `Run`
 
 ## Next milestone
 implement Phase 03 runtime and test changes in small reviewable steps

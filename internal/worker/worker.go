@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -15,6 +16,7 @@ const defaultProcessingFailureRetryDelay = 30 * time.Second
 const defaultRetryDispatchInterval = 1 * time.Minute
 const defaultRetryDispatchBatchSize = 10
 const defaultRetryReenqueueDelay = 1 * time.Minute
+const defaultWorkerConcurrency = 1
 
 type Worker struct {
 	repo                        jobs.Repository
@@ -25,6 +27,7 @@ type Worker struct {
 	retryDispatchInterval       time.Duration
 	retryDispatchBatchSize      int
 	retryReenqueueDelay         time.Duration
+	concurrency                 int
 }
 
 type RetryRuntimeConfig struct {
@@ -56,6 +59,7 @@ func NewWorker(repo jobs.Repository, queue queue.Queue, processor Processor, log
 		retryDispatchInterval:       defaultRetryDispatchInterval,
 		retryDispatchBatchSize:      defaultRetryDispatchBatchSize,
 		retryReenqueueDelay:         defaultRetryReenqueueDelay,
+		concurrency:                 defaultWorkerConcurrency,
 	}
 }
 
@@ -83,6 +87,24 @@ func (w *Worker) SetRetryRuntimeConfig(cfg RetryRuntimeConfig) error {
 func (w *Worker) Run(ctx context.Context) {
 	go w.runRetryDispatcher(ctx)
 
+	msgs := make(chan queue.Message)
+	var wg sync.WaitGroup
+	for i := 0; i < w.concurrency; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for msg := range msgs {
+				if err := w.handleMessage(ctx, msg); err != nil {
+					w.logger.Error("failed to handle message", "error", err)
+				}
+			}
+		}()
+	}
+	defer func() {
+		close(msgs)
+		wg.Wait()
+	}()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -96,8 +118,10 @@ func (w *Worker) Run(ctx context.Context) {
 				w.logger.Error("failed to dequeue message", "error", err)
 				continue
 			}
-			if err := w.handleMessage(ctx, msg); err != nil {
-				w.logger.Error("failed to handle message", "error", err)
+			select {
+			case <-ctx.Done():
+				return
+			case msgs <- msg:
 			}
 		}
 	}

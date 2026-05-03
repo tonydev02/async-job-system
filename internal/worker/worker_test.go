@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -407,6 +409,128 @@ func TestRun_DequeueEmpty_StopsOnContextCancel(t *testing.T) {
 
 	if q.dequeueCalls == 0 {
 		t.Fatal("expected queue.Dequeue to be called at least once")
+	}
+}
+
+func TestRun_UsesBoundedWorkerPoolConcurrency(t *testing.T) {
+	jobIDs := []uuid.UUID{uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()}
+
+	var dequeueMu sync.Mutex
+	next := 0
+	repo := &fakeRepo{
+		markProcessingFn: func(ctx context.Context, id uuid.UUID) (bool, error) { return true, nil },
+		markCompletedFn:  func(ctx context.Context, id uuid.UUID, result json.RawMessage) (bool, error) { return true, nil },
+	}
+	q := &fakeQueue{
+		dequeueFn: func(ctx context.Context) (queue.Message, error) {
+			dequeueMu.Lock()
+			defer dequeueMu.Unlock()
+			if next < len(jobIDs) {
+				msg := queue.Message{JobID: jobIDs[next]}
+				next++
+				return msg, nil
+			}
+			select {
+			case <-ctx.Done():
+				return queue.Message{}, ctx.Err()
+			default:
+				return queue.Message{}, queue.ErrEmpty
+			}
+		},
+	}
+
+	release := make(chan struct{})
+	started := make(chan struct{}, len(jobIDs))
+	var active int32
+	var maxActive int32
+	processor := &fakeProcessor{
+		processFn: func(ctx context.Context, jobID uuid.UUID) (json.RawMessage, error) {
+			cur := atomic.AddInt32(&active, 1)
+			for {
+				prev := atomic.LoadInt32(&maxActive)
+				if cur <= prev || atomic.CompareAndSwapInt32(&maxActive, prev, cur) {
+					break
+				}
+			}
+			started <- struct{}{}
+			<-release
+			atomic.AddInt32(&active, -1)
+			return json.RawMessage(`{"ok":true}`), nil
+		},
+	}
+
+	worker := newTestWorker(repo, q, processor)
+	worker.concurrency = 2
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+
+	go func() {
+		worker.Run(ctx)
+		close(done)
+	}()
+
+	for i := 0; i < 2; i++ {
+		select {
+		case <-started:
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("expected two jobs to start processing concurrently")
+		}
+	}
+
+	select {
+	case <-started:
+		t.Fatal("expected third job to wait for a free worker")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("worker.Run did not stop after context cancellation")
+	}
+
+	if got := atomic.LoadInt32(&maxActive); got > 2 {
+		t.Fatalf("expected max active processors <= 2, got %d", got)
+	}
+}
+
+func TestRun_StartsRetryDispatcher(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	repo := &fakeRepo{
+		claimDueRetriesFn: func(ctx context.Context, now time.Time, limit int) ([]uuid.UUID, error) {
+			cancel()
+			return nil, nil
+		},
+	}
+	q := &fakeQueue{
+		dequeueFn: func(ctx context.Context) (queue.Message, error) {
+			<-ctx.Done()
+			return queue.Message{}, ctx.Err()
+		},
+	}
+	processor := &fakeProcessor{}
+	worker := newTestWorker(repo, q, processor)
+
+	done := make(chan struct{})
+	go func() {
+		worker.Run(ctx)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("worker.Run did not stop after context cancellation")
+	}
+
+	if repo.claimDueRetriesCalls == 0 {
+		t.Fatal("expected retry dispatcher to run when worker starts")
 	}
 }
 
