@@ -7,7 +7,7 @@ Async Job Processing System
 03 — Concurrency and Worker Safety
 
 ## Current status
-Phase 03 planning complete; implementation pending.
+Phase 03 implementation started; worker runtime config slice is in progress.
 
 ## Objective
 Harden duplicate-delivery handling and multi-worker race safety while preserving explicit DB-backed lifecycle transitions.
@@ -35,6 +35,10 @@ Harden duplicate-delivery handling and multi-worker race safety while preserving
   - bounded in-process worker pool runtime model
   - graceful shutdown drain behavior target
   - explicit contention/race test coverage expectations
+- Phase 03 config slice implemented:
+  - `WORKER_CONCURRENCY` added to worker runtime config load/validation
+  - default `4`, env override support, fail-fast on non-positive values
+  - worker entrypoint now wires concurrency value into runtime logging context
 
 ## Next milestone
 implement Phase 03 runtime and test changes in small reviewable steps

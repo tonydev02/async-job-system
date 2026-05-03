@@ -14,6 +14,7 @@ type WorkerConfig struct {
 	RedisDB                int
 	RedisQueueKey          string
 	RedisBlockTimeout      time.Duration
+	WorkerConcurrency      int
 	RetryDelay             time.Duration
 	RetryDispatchInterval  time.Duration
 	RetryDispatchBatchSize int
@@ -37,6 +38,14 @@ func LoadWorkerConfig() (WorkerConfig, error) {
 	blockTimeout, err := getEnvDuration("REDIS_BLOCK_TIMEOUT", 3*time.Second)
 	if err != nil {
 		return WorkerConfig{}, fmt.Errorf("REDIS_BLOCK_TIMEOUT: %w", err)
+	}
+
+	workerConcurrency, err := getEnvInt("WORKER_CONCURRENCY", 4)
+	if err != nil {
+		return WorkerConfig{}, fmt.Errorf("WORKER_CONCURRENCY: %w", err)
+	}
+	if workerConcurrency <= 0 {
+		return WorkerConfig{}, fmt.Errorf("WORKER_CONCURRENCY must be greater than zero")
 	}
 
 	retryDelay, err := getEnvDuration("RETRY_DELAY", 30*time.Second)
@@ -83,6 +92,7 @@ func LoadWorkerConfig() (WorkerConfig, error) {
 		RedisDB:                redisDB,
 		RedisQueueKey:          getEnv("REDIS_QUEUE_KEY", "jobs:queue"),
 		RedisBlockTimeout:      blockTimeout,
+		WorkerConcurrency:      workerConcurrency,
 		RetryDelay:             retryDelay,
 		RetryDispatchInterval:  retryDispatchInterval,
 		RetryDispatchBatchSize: retryDispatchBatchSize,

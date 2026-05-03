@@ -7,6 +7,7 @@ import (
 
 func TestLoadWorkerConfig_RetryDefaults(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/async_jobs?sslmode=disable")
+	t.Setenv("WORKER_CONCURRENCY", "")
 	t.Setenv("RETRY_DELAY", "")
 	t.Setenv("RETRY_DISPATCH_INTERVAL", "")
 	t.Setenv("RETRY_DISPATCH_BATCH_SIZE", "")
@@ -29,10 +30,14 @@ func TestLoadWorkerConfig_RetryDefaults(t *testing.T) {
 	if cfg.RetryReenqueueDelay != 1*time.Minute {
 		t.Fatalf("unexpected RETRY_REENQUEUE_DELAY default: got %s want %s", cfg.RetryReenqueueDelay, time.Minute)
 	}
+	if cfg.WorkerConcurrency != 4 {
+		t.Fatalf("unexpected WORKER_CONCURRENCY default: got %d want %d", cfg.WorkerConcurrency, 4)
+	}
 }
 
 func TestLoadWorkerConfig_RetryOverrides(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/async_jobs?sslmode=disable")
+	t.Setenv("WORKER_CONCURRENCY", "8")
 	t.Setenv("RETRY_DELAY", "45s")
 	t.Setenv("RETRY_DISPATCH_INTERVAL", "15s")
 	t.Setenv("RETRY_DISPATCH_BATCH_SIZE", "25")
@@ -54,6 +59,9 @@ func TestLoadWorkerConfig_RetryOverrides(t *testing.T) {
 	}
 	if cfg.RetryReenqueueDelay != 10*time.Second {
 		t.Fatalf("unexpected RETRY_REENQUEUE_DELAY: got %s want %s", cfg.RetryReenqueueDelay, 10*time.Second)
+	}
+	if cfg.WorkerConcurrency != 8 {
+		t.Fatalf("unexpected WORKER_CONCURRENCY: got %d want %d", cfg.WorkerConcurrency, 8)
 	}
 }
 
@@ -93,6 +101,38 @@ func TestLoadWorkerConfig_NonPositiveRetryValues(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/async_jobs?sslmode=disable")
 			t.Setenv(tc.key, tc.value)
+
+			_, err := LoadWorkerConfig()
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+		})
+	}
+}
+
+func TestLoadWorkerConfig_InvalidWorkerConcurrency(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/async_jobs?sslmode=disable")
+	t.Setenv("WORKER_CONCURRENCY", "not-an-int")
+
+	_, err := LoadWorkerConfig()
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestLoadWorkerConfig_NonPositiveWorkerConcurrency(t *testing.T) {
+	testCases := []struct {
+		name  string
+		value string
+	}{
+		{name: "worker concurrency zero", value: "0"},
+		{name: "worker concurrency negative", value: "-1"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/async_jobs?sslmode=disable")
+			t.Setenv("WORKER_CONCURRENCY", tc.value)
 
 			_, err := LoadWorkerConfig()
 			if err == nil {

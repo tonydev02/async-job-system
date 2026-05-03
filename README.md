@@ -121,6 +121,7 @@ export REDIS_ADDR='localhost:6379'
 export REDIS_DB='0'
 export REDIS_QUEUE_KEY='jobs:queue'
 export REDIS_BLOCK_TIMEOUT='3s'
+export WORKER_CONCURRENCY='4'
 export WORKER_SHUTDOWN_TIMEOUT='10s'
 export LOG_LEVEL='info'
 
@@ -172,6 +173,7 @@ Worker tests include dispatcher coverage:
 
 - API and worker are separately runnable.
 - Retry timing is configurable via:
+  - `WORKER_CONCURRENCY`
   - `RETRY_DELAY`
   - `RETRY_DISPATCH_INTERVAL`
   - `RETRY_DISPATCH_BATCH_SIZE`

@@ -80,7 +80,8 @@ func run(ctx context.Context, cfg config.WorkerConfig) error {
 	repo := postgres.NewRepository(db)
 	q := redisqueue.NewQueue(redisClient, cfg.RedisQueueKey, cfg.RedisBlockTimeout)
 	processor := &worker.DeterministicProcessor{FailJobID: cfg.ProcessorFailJobID}
-	w := worker.NewWorker(repo, q, processor, logger)
+	workerLogger := logger.With("worker_concurrency", cfg.WorkerConcurrency)
+	w := worker.NewWorker(repo, q, processor, workerLogger)
 	if err := w.SetRetryRuntimeConfig(worker.RetryRuntimeConfig{
 		RetryDelay:        cfg.RetryDelay,
 		DispatchInterval:  cfg.RetryDispatchInterval,
