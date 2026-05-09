@@ -45,6 +45,7 @@ Reason:
   - `MarkProcessing` single-winner semantics
   - terminal transition single-application semantics
   - `ClaimDueRetries` no duplicate claim across concurrent callers
+- coordinate repository contention tests with explicit start barriers and wait groups, then assert persisted end state rather than relying on timing-only checks
 
 ## Deferred decisions
 - visibility timeout and stale `processing` recovery (Phase 04)

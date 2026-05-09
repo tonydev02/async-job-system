@@ -1,7 +1,7 @@
 # PHASE-SUMMARY.md
 
 ## Outcome
-Phase 03 implementation is in progress with bounded in-process worker-pool runtime and graceful shutdown-drain behavior now implemented.
+Phase 03 implementation is in progress with bounded in-process worker-pool runtime, graceful shutdown-drain behavior, and repository contention coverage now implemented.
 
 ## What is finalized
 - phase scope, goals, non-goals, and acceptance criteria
@@ -45,9 +45,12 @@ Phase 03 implementation is in progress with bounded in-process worker-pool runti
   - worker-pool handlers attach stable `worker_slot` context to per-job logs
   - claim win/skip paths log `job_id`, transition name, applied flag, and outcome
   - completion and failure transition logs now include explicit transition outcome fields
+- repository contention integration tests:
+  - concurrent `MarkProcessing` calls on the same pending job assert exactly one success and one attempt increment
+  - concurrent `MarkCompleted`/`MarkFailed` terminal attempts from `processing` assert at most one applied terminal transition
+  - concurrent `ClaimDueRetries` callers assert claimed IDs are unique across callers
 
 ## What is pending implementation
-- contention/race integration tests in repository layer
 - README and operational docs updates reflecting finalized Phase 03 behavior
 
 ## Pairing mode
@@ -55,5 +58,5 @@ Implementation can proceed in small reviewable chunks:
 1. worker runtime concurrency refactor — complete
 2. worker concurrency/shutdown tests — complete
 3. worker concurrent logging traceability — complete
-4. repository contention tests
+4. repository contention tests — complete
 5. docs + UAT evidence capture

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -131,6 +132,37 @@ func TestRepositoryPendingToProcessingOnlyOnce(t *testing.T) {
 	}
 }
 
+func TestRepositoryConcurrentMarkProcessingSingleWinner(t *testing.T) {
+	db := setupDBWithJobsTable(t)
+	repo := postgres.NewRepository(db)
+
+	created, err := repo.Create(context.Background(), jobs.CreateParams{Payload: json.RawMessage(`{"task":"contention-processing"}`)})
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+
+	const callers = 16
+	results := runConcurrent(callers, func(int) (bool, error) {
+		return repo.MarkProcessing(context.Background(), created.ID)
+	})
+
+	assertNoConcurrentErrors(t, results)
+	if got := countApplied(results); got != 1 {
+		t.Fatalf("expected exactly one successful MarkProcessing call, got %d", got)
+	}
+
+	fetched, err := repo.GetByID(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("get job by id: %v", err)
+	}
+	if fetched.Status != jobs.StatusProcessing {
+		t.Fatalf("expected processing status, got %s", fetched.Status)
+	}
+	if fetched.Attempt != 1 {
+		t.Fatalf("expected exactly one attempt increment, got %d", fetched.Attempt)
+	}
+}
+
 func TestRepositoryProcessingToCompleted(t *testing.T) {
 	db := setupDBWithJobsTable(t)
 	repo := postgres.NewRepository(db)
@@ -168,6 +200,56 @@ func TestRepositoryProcessingToCompleted(t *testing.T) {
 	}
 	if fetched.CompletedAt == nil {
 		t.Fatal("expected completed_at to be set")
+	}
+}
+
+func TestRepositoryConcurrentTerminalTransitionsAtMostOneApplies(t *testing.T) {
+	db := setupDBWithJobsTable(t)
+	repo := postgres.NewRepository(db)
+
+	created, err := repo.Create(context.Background(), jobs.CreateParams{Payload: json.RawMessage(`{"task":"contention-terminal"}`)})
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+
+	ok, err := repo.MarkProcessing(context.Background(), created.ID)
+	if err != nil || !ok {
+		t.Fatalf("mark processing: ok=%v err=%v", ok, err)
+	}
+
+	attempts := []func() (bool, error){
+		func() (bool, error) {
+			return repo.MarkCompleted(context.Background(), created.ID, json.RawMessage(`{"worker":1}`))
+		},
+		func() (bool, error) {
+			return repo.MarkFailed(context.Background(), created.ID, "worker 2 failed")
+		},
+		func() (bool, error) {
+			return repo.MarkCompleted(context.Background(), created.ID, json.RawMessage(`{"worker":3}`))
+		},
+		func() (bool, error) {
+			return repo.MarkFailed(context.Background(), created.ID, "worker 4 failed")
+		},
+	}
+
+	results := runConcurrent(len(attempts), func(i int) (bool, error) {
+		return attempts[i]()
+	})
+
+	assertNoConcurrentErrors(t, results)
+	if got := countApplied(results); got > 1 {
+		t.Fatalf("expected at most one terminal transition to apply, got %d", got)
+	}
+
+	fetched, err := repo.GetByID(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("get job by id: %v", err)
+	}
+	if fetched.Status != jobs.StatusCompleted && fetched.Status != jobs.StatusFailed {
+		t.Fatalf("expected terminal status, got %s", fetched.Status)
+	}
+	if fetched.CompletedAt == nil {
+		t.Fatal("expected completed_at to be set by terminal transition")
 	}
 }
 
@@ -388,6 +470,73 @@ func TestRepositoryClaimDueRetries_ClearsNextRunAtOnClaim(t *testing.T) {
 	}
 }
 
+func TestRepositoryConcurrentClaimDueRetriesDoesNotDuplicateIDs(t *testing.T) {
+	db := setupDBWithJobsTable(t)
+	repo := postgres.NewRepository(db)
+
+	const dueJobs = 12
+	for i := 0; i < dueJobs; i++ {
+		created, err := repo.Create(context.Background(), jobs.CreateParams{Payload: json.RawMessage(`{"task":"contention-claim"}`)})
+		if err != nil {
+			t.Fatalf("create job %d: %v", i, err)
+		}
+
+		ok, err := repo.RescheduleRetry(context.Background(), created.ID, time.Hour)
+		if err != nil {
+			t.Fatalf("reschedule retry %d: %v", i, err)
+		}
+		if !ok {
+			t.Fatalf("expected reschedule retry %d to apply", i)
+		}
+	}
+
+	const callers = 6
+	type claimResult struct {
+		ids []string
+		err error
+	}
+
+	claimCutoff := time.Now().Add(2 * time.Hour)
+	start := make(chan struct{})
+	results := make([]claimResult, callers)
+	var wg sync.WaitGroup
+	wg.Add(callers)
+	for i := 0; i < callers; i++ {
+		go func(i int) {
+			defer wg.Done()
+			<-start
+
+			ids, err := repo.ClaimDueRetries(context.Background(), claimCutoff, 3)
+			results[i].err = err
+			for _, id := range ids {
+				results[i].ids = append(results[i].ids, id.String())
+			}
+		}(i)
+	}
+
+	close(start)
+	wg.Wait()
+
+	seen := make(map[string]struct{})
+	totalClaimed := 0
+	for i, result := range results {
+		if result.err != nil {
+			t.Fatalf("claim due retries caller %d: %v", i, result.err)
+		}
+		for _, id := range result.ids {
+			totalClaimed++
+			if _, ok := seen[id]; ok {
+				t.Fatalf("duplicate claimed job id across callers: %s", id)
+			}
+			seen[id] = struct{}{}
+		}
+	}
+
+	if totalClaimed != dueJobs {
+		t.Fatalf("expected all due jobs to be claimed once, got %d of %d", totalClaimed, dueJobs)
+	}
+}
+
 func TestRepositoryInvalidTransitionPendingToCompleted(t *testing.T) {
 	db := setupDBWithJobsTable(t)
 	repo := postgres.NewRepository(db)
@@ -404,6 +553,56 @@ func TestRepositoryInvalidTransitionPendingToCompleted(t *testing.T) {
 	if ok {
 		t.Fatal("expected pending->completed transition to be rejected")
 	}
+}
+
+type concurrentBoolResult struct {
+	applied bool
+	err     error
+}
+
+func runConcurrent(count int, fn func(int) (bool, error)) []concurrentBoolResult {
+	start := make(chan struct{})
+	results := make([]concurrentBoolResult, count)
+
+	var wg sync.WaitGroup
+	wg.Add(count)
+	for i := 0; i < count; i++ {
+		go func(i int) {
+			defer wg.Done()
+			<-start
+
+			applied, err := fn(i)
+			results[i] = concurrentBoolResult{
+				applied: applied,
+				err:     err,
+			}
+		}(i)
+	}
+
+	close(start)
+	wg.Wait()
+
+	return results
+}
+
+func assertNoConcurrentErrors(t *testing.T, results []concurrentBoolResult) {
+	t.Helper()
+
+	for i, result := range results {
+		if result.err != nil {
+			t.Fatalf("concurrent call %d: %v", i, result.err)
+		}
+	}
+}
+
+func countApplied(results []concurrentBoolResult) int {
+	var count int
+	for _, result := range results {
+		if result.applied {
+			count++
+		}
+	}
+	return count
 }
 
 func openTestDB(t *testing.T) *sql.DB {

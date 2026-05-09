@@ -25,9 +25,9 @@ Validate concurrency and worker-safety behavior under duplicate delivery and mul
 - [x] verify timeout stops waiting when in-flight work does not exit on context cancellation
 
 ### 4. Repository contention safety
-- [ ] concurrent `MarkProcessing` calls on same job yield exactly one success
-- [ ] concurrent terminal/failure transition attempts apply at most once
-- [ ] concurrent `ClaimDueRetries` callers do not duplicate claimed job IDs
+- [x] concurrent `MarkProcessing` calls on same job yield exactly one success
+- [x] concurrent terminal/failure transition attempts apply at most once
+- [x] concurrent `ClaimDueRetries` callers do not duplicate claimed job IDs
 
 ### 5. Logging traceability under concurrency
 - [x] confirm job-related logs include `job_id`
@@ -35,6 +35,7 @@ Validate concurrency and worker-safety behavior under duplicate delivery and mul
 
 ## Command validation
 - [x] `go test ./internal/worker ./internal/config ./cmd/worker`
+- [x] `go test ./internal/jobs/postgres`
 - [x] `go test ./...`
 - [x] `go vet ./...`
 
@@ -42,8 +43,8 @@ Validate concurrency and worker-safety behavior under duplicate delivery and mul
 - [x] worker duplicate-delivery contention unit tests
 - [x] worker bounded-concurrency unit tests
 - [x] worker graceful-shutdown drain tests
-- [ ] repository concurrent transition tests
-- [ ] repository concurrent due-retry claim tests
+- [x] repository concurrent transition tests
+- [x] repository concurrent due-retry claim tests
 - [x] worker claim win/skip transition log assertions
 
 ## Manual verification
