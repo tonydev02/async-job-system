@@ -1,11 +1,13 @@
 package worker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -193,7 +195,7 @@ func TestHandleMessage_MarkProcessingFalse_SkipProcessor(t *testing.T) {
 	worker := newTestWorker(repo, q, processor)
 
 	msg := queue.Message{JobID: uuid.New()}
-	if err := worker.handleMessage(context.Background(), msg); err != nil {
+	if err := worker.handleMessage(context.Background(), msg, worker.logger); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -211,6 +213,78 @@ func TestHandleMessage_MarkProcessingFalse_SkipProcessor(t *testing.T) {
 	}
 	if repo.handleProcessingFailureCalls != 0 {
 		t.Fatalf("expected repo.HandleProcessingFailure to not be called, but it was called %d times", repo.handleProcessingFailureCalls)
+	}
+}
+
+func TestHandleMessage_LogsClaimTransitionOutcomesWithWorkerSlot(t *testing.T) {
+	jobID := uuid.New()
+
+	var skipped bytes.Buffer
+	skipRepo := &fakeRepo{
+		markProcessingFn: func(ctx context.Context, id uuid.UUID) (bool, error) {
+			return false, nil
+		},
+	}
+	skipWorker := NewWorker(
+		skipRepo,
+		&fakeQueue{},
+		&fakeProcessor{},
+		slog.New(slog.NewTextHandler(&skipped, nil)),
+	)
+
+	if err := skipWorker.handleMessage(context.Background(), queue.Message{JobID: jobID}, skipWorker.logger.With("worker_slot", 2)); err != nil {
+		t.Fatalf("unexpected skip error: %v", err)
+	}
+
+	skipLog := skipped.String()
+	for _, want := range []string{
+		"job_id=" + jobID.String(),
+		"worker_slot=2",
+		"transition=pending_to_processing",
+		"transition_applied=false",
+		"transition_outcome=skipped",
+	} {
+		if !strings.Contains(skipLog, want) {
+			t.Fatalf("expected skip log to contain %q, got %q", want, skipLog)
+		}
+	}
+
+	var claimed bytes.Buffer
+	claimRepo := &fakeRepo{
+		markProcessingFn: func(ctx context.Context, id uuid.UUID) (bool, error) {
+			return true, nil
+		},
+		markCompletedFn: func(ctx context.Context, id uuid.UUID, result json.RawMessage) (bool, error) {
+			return true, nil
+		},
+	}
+	claimProcessor := &fakeProcessor{
+		processFn: func(ctx context.Context, jobID uuid.UUID) (json.RawMessage, error) {
+			return json.RawMessage(`{"ok":true}`), nil
+		},
+	}
+	claimWorker := NewWorker(
+		claimRepo,
+		&fakeQueue{},
+		claimProcessor,
+		slog.New(slog.NewTextHandler(&claimed, nil)),
+	)
+
+	if err := claimWorker.handleMessage(context.Background(), queue.Message{JobID: jobID}, claimWorker.logger.With("worker_slot", 1)); err != nil {
+		t.Fatalf("unexpected claim error: %v", err)
+	}
+
+	claimLog := claimed.String()
+	for _, want := range []string{
+		"job_id=" + jobID.String(),
+		"worker_slot=1",
+		"transition=pending_to_processing",
+		"transition_applied=true",
+		"transition_outcome=claimed",
+	} {
+		if !strings.Contains(claimLog, want) {
+			t.Fatalf("expected claim log to contain %q, got %q", want, claimLog)
+		}
 	}
 }
 
@@ -237,7 +311,7 @@ func TestProcessJob_Success_MarksCompleted(t *testing.T) {
 	worker := newTestWorker(repo, q, processor)
 
 	jobID := uuid.New()
-	if err := worker.processJob(context.Background(), jobID); err != nil {
+	if err := worker.processJob(context.Background(), jobID, worker.logger); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -282,7 +356,7 @@ func TestProcessJob_ProcessorError_HandlesFailureTransitionRetry(t *testing.T) {
 	worker := newTestWorker(repo, q, processor)
 
 	jobID := uuid.New()
-	err := worker.processJob(context.Background(), jobID)
+	err := worker.processJob(context.Background(), jobID, worker.logger)
 	if !errors.Is(err, processErr) {
 		t.Fatalf("expected error %v, got %v", processErr, err)
 	}
@@ -326,7 +400,7 @@ func TestProcessJob_ProcessorError_HandlesFailureTransitionTerminal(t *testing.T
 	worker := newTestWorker(repo, q, processor)
 
 	jobID := uuid.New()
-	err := worker.processJob(context.Background(), jobID)
+	err := worker.processJob(context.Background(), jobID, worker.logger)
 	if !errors.Is(err, processErr) {
 		t.Fatalf("expected error %v, got %v", processErr, err)
 	}
@@ -355,7 +429,7 @@ func TestProcessJob_ProcessorError_TransitionAlreadyApplied(t *testing.T) {
 	worker := newTestWorker(repo, q, processor)
 
 	jobID := uuid.New()
-	err := worker.processJob(context.Background(), jobID)
+	err := worker.processJob(context.Background(), jobID, worker.logger)
 	if !errors.Is(err, processErr) {
 		t.Fatalf("expected error %v, got %v", processErr, err)
 	}

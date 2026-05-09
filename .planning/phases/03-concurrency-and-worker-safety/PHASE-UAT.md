@@ -28,8 +28,8 @@ Validate concurrency and worker-safety behavior under duplicate delivery and mul
 - [ ] concurrent `ClaimDueRetries` callers do not duplicate claimed job IDs
 
 ### 5. Logging traceability under concurrency
-- [ ] confirm job-related logs include `job_id`
-- [ ] confirm worker context fields (`worker_instance`, transition result) are present in concurrent paths
+- [x] confirm job-related logs include `job_id`
+- [x] confirm worker context fields (`worker_slot`, transition result) are present in concurrent paths
 
 ## Command validation
 - [x] `go test ./internal/worker ./internal/config ./cmd/worker`
@@ -42,6 +42,7 @@ Validate concurrency and worker-safety behavior under duplicate delivery and mul
 - [x] worker graceful-shutdown drain tests
 - [ ] repository concurrent transition tests
 - [ ] repository concurrent due-retry claim tests
+- [x] worker claim win/skip transition log assertions
 
 ## Manual verification
 - [ ] run local API + multiple worker processes against same Postgres/Redis

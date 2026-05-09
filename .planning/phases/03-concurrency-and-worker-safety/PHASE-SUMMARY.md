@@ -37,6 +37,10 @@ Phase 03 implementation is in progress with bounded in-process worker-pool runti
   - in-flight jobs are awaited before `Run` returns
   - shutdown timeout cancels an in-flight job context
   - shutdown timeout returns even if an in-flight job ignores context cancellation
+- worker logging traceability:
+  - worker-pool handlers attach stable `worker_slot` context to per-job logs
+  - claim win/skip paths log `job_id`, transition name, applied flag, and outcome
+  - completion and failure transition logs now include explicit transition outcome fields
 
 ## What is pending implementation
 - contention/race integration tests in repository layer
@@ -46,5 +50,6 @@ Phase 03 implementation is in progress with bounded in-process worker-pool runti
 Implementation can proceed in small reviewable chunks:
 1. worker runtime concurrency refactor — complete
 2. worker concurrency/shutdown tests — complete
-3. repository contention tests
-4. docs + UAT evidence capture
+3. worker concurrent logging traceability — complete
+4. repository contention tests
+5. docs + UAT evidence capture

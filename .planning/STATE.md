@@ -48,6 +48,9 @@ Harden duplicate-delivery handling and multi-worker race safety while preserving
   - in-flight jobs receive a drain context that is not canceled immediately by shutdown
   - configured shutdown timeout explicitly cancels in-flight work that has not drained and stops waiting
   - worker entrypoint wires both `WORKER_CONCURRENCY` and `WORKER_SHUTDOWN_TIMEOUT` into runtime behavior
+- Phase 03 worker logging traceability slice implemented:
+  - concurrent worker-pool handlers attach stable `worker_slot` context to per-job logs
+  - guarded transition logs include `job_id`, transition name, applied flag, and outcome
 
 ## Next milestone
 implement Phase 03 repository contention tests in small reviewable steps

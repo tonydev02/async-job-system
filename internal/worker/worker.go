@@ -112,15 +112,17 @@ func (w *Worker) Run(ctx context.Context) {
 	defer cancelDrain()
 
 	for i := 0; i < w.concurrency; i++ {
+		workerSlot := i + 1
 		wg.Add(1)
-		go func() {
+		go func(workerSlot int) {
 			defer wg.Done()
+			logger := w.logger.With("worker_slot", workerSlot)
 			for msg := range msgs {
-				if err := w.handleMessage(drainCtx, msg); err != nil {
-					w.logger.Error("failed to handle message", "error", err)
+				if err := w.handleMessage(drainCtx, msg, logger); err != nil {
+					logger.Error("failed to handle message", "job_id", msg.JobID, "error", err)
 				}
 			}
-		}()
+		}(workerSlot)
 	}
 	defer func() {
 		close(msgs)
@@ -169,57 +171,95 @@ func (w *Worker) waitForInFlightJobs(wg *sync.WaitGroup, cancelDrain context.Can
 	}
 }
 
-func (w *Worker) handleMessage(ctx context.Context, msg queue.Message) error {
+func (w *Worker) handleMessage(ctx context.Context, msg queue.Message, logger *slog.Logger) error {
 	ok, err := w.repo.MarkProcessing(ctx, msg.JobID)
 	if err != nil {
-		w.logger.Error("failed to mark job as processing", "job_id", msg.JobID, "error", err)
+		logger.Error(
+			"failed to mark job as processing",
+			"job_id", msg.JobID,
+			"transition", "pending_to_processing",
+			"error", err,
+		)
 		return err
 	}
 	if !ok {
-		w.logger.Info("job is already being processed by another worker", "job_id", msg.JobID)
+		logger.Info(
+			"job processing claim transition skipped",
+			"job_id", msg.JobID,
+			"transition", "pending_to_processing",
+			"transition_applied", false,
+			"transition_outcome", "skipped",
+		)
 		return nil
 	}
 
-	return w.processJob(ctx, msg.JobID)
+	logger.Info(
+		"job processing claim transition applied",
+		"job_id", msg.JobID,
+		"transition", "pending_to_processing",
+		"transition_applied", true,
+		"transition_outcome", "claimed",
+	)
+	return w.processJob(ctx, msg.JobID, logger)
 }
 
-func (w *Worker) processJob(ctx context.Context, jobID uuid.UUID) error {
+func (w *Worker) processJob(ctx context.Context, jobID uuid.UUID, logger *slog.Logger) error {
 	result, err := w.processor.Process(ctx, jobID)
 	if err != nil {
-		w.logger.Error("failed to process job", "job_id", jobID, "error", err)
+		logger.Error("failed to process job", "job_id", jobID, "error", err)
 
 		transition, markErr := w.repo.HandleProcessingFailure(ctx, jobID, err.Error(), w.processingFailureRetryDelay)
 		if markErr != nil {
-			w.logger.Error("failed to handle processing failure", "job_id", jobID, "error", markErr)
+			logger.Error(
+				"failed to handle processing failure",
+				"job_id", jobID,
+				"transition", "processing_to_failure_decision",
+				"error", markErr,
+			)
 			return markErr
 		}
 		if !transition.Applied {
-			w.logger.Info("processing failure transition was already applied by another worker", "job_id", jobID)
+			logger.Info(
+				"processing failure transition skipped",
+				"job_id", jobID,
+				"transition", "processing_to_failure_decision",
+				"transition_applied", false,
+				"transition_outcome", "skipped",
+			)
 			return err
 		}
 
 		switch transition.Decision {
 		case jobs.FailureDecisionRetry:
-			w.logger.Info(
+			logger.Info(
 				"job failure transitioned to retry",
 				"job_id", jobID,
+				"transition", "processing_to_pending",
+				"transition_applied", true,
+				"transition_outcome", "retry_scheduled",
 				"decision", transition.Decision,
 				"attempt", transition.Attempt,
 				"max_attempts", transition.MaxAttempts,
 				"next_run_at", transition.NextRunAt,
 			)
 		case jobs.FailureDecisionTerminal:
-			w.logger.Info(
+			logger.Info(
 				"job failure transitioned to terminal failed",
 				"job_id", jobID,
+				"transition", "processing_to_failed",
+				"transition_applied", true,
+				"transition_outcome", "terminal_failed",
 				"decision", transition.Decision,
 				"attempt", transition.Attempt,
 				"max_attempts", transition.MaxAttempts,
 			)
 		default:
-			w.logger.Warn(
+			logger.Warn(
 				"job failure transition returned unknown decision",
 				"job_id", jobID,
+				"transition", "processing_to_failure_decision",
+				"transition_applied", true,
+				"transition_outcome", "unknown",
 				"decision", transition.Decision,
 				"attempt", transition.Attempt,
 				"max_attempts", transition.MaxAttempts,
@@ -230,15 +270,32 @@ func (w *Worker) processJob(ctx context.Context, jobID uuid.UUID) error {
 
 	ok, err := w.repo.MarkCompleted(ctx, jobID, result)
 	if err != nil {
-		w.logger.Error("failed to mark job as completed", "job_id", jobID, "error", err)
+		logger.Error(
+			"failed to mark job as completed",
+			"job_id", jobID,
+			"transition", "processing_to_completed",
+			"error", err,
+		)
 		return err
 	}
 	if !ok {
-		w.logger.Info("job is already marked as completed by another worker", "job_id", jobID)
+		logger.Info(
+			"job completion transition skipped",
+			"job_id", jobID,
+			"transition", "processing_to_completed",
+			"transition_applied", false,
+			"transition_outcome", "skipped",
+		)
 		return nil
 	}
 
-	w.logger.Info("successfully processed job", "job_id", jobID)
+	logger.Info(
+		"successfully processed job",
+		"job_id", jobID,
+		"transition", "processing_to_completed",
+		"transition_applied", true,
+		"transition_outcome", "completed",
+	)
 	return nil
 }
 
