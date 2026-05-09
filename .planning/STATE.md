@@ -7,7 +7,7 @@ Async Job Processing System
 03 — Concurrency and Worker Safety
 
 ## Current status
-Phase 03 implementation in progress; bounded worker-pool runtime slice is complete, shutdown-drain and repository contention slices remain.
+Phase 03 implementation in progress; bounded worker-pool runtime and graceful shutdown-drain slices are complete, repository contention slice remains.
 
 ## Objective
 Harden duplicate-delivery handling and multi-worker race safety while preserving explicit DB-backed lifecycle transitions.
@@ -43,9 +43,14 @@ Harden duplicate-delivery handling and multi-worker race safety while preserving
   - `internal/worker` `Run` now uses bounded in-process pool concurrency
   - retry dispatcher startup behavior preserved from `Run`
   - worker tests now cover bounded concurrency ceiling and dispatcher startup from `Run`
+- Phase 03 worker shutdown-drain slice implemented:
+  - cancellation stops dequeue acceptance and closes the internal work channel
+  - in-flight jobs receive a drain context that is not canceled immediately by shutdown
+  - configured shutdown timeout explicitly cancels in-flight work that has not drained and stops waiting
+  - worker entrypoint wires both `WORKER_CONCURRENCY` and `WORKER_SHUTDOWN_TIMEOUT` into runtime behavior
 
 ## Next milestone
-implement Phase 03 runtime and test changes in small reviewable steps
+implement Phase 03 repository contention tests in small reviewable steps
 
 ## Risks / open questions
 - contention tests require careful deterministic orchestration to avoid flaky timing-based assertions

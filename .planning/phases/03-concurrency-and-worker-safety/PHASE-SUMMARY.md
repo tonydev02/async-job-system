@@ -1,7 +1,7 @@
 # PHASE-SUMMARY.md
 
 ## Outcome
-Phase 03 implementation is in progress with bounded in-process worker-pool runtime now implemented.
+Phase 03 implementation is in progress with bounded in-process worker-pool runtime and graceful shutdown-drain behavior now implemented.
 
 ## What is finalized
 - phase scope, goals, non-goals, and acceptance criteria
@@ -26,15 +26,25 @@ Phase 03 implementation is in progress with bounded in-process worker-pool runti
 - worker runtime tests expanded:
   - bounded concurrency test asserts active processing does not exceed configured worker count
   - `Run` test coverage now asserts retry dispatcher starts when worker runtime starts
+- worker graceful shutdown drain:
+  - `Run` stops accepting dequeued work when its run context is canceled
+  - internal work channel closes so idle workers exit
+  - in-flight jobs continue on a drain context until completion or shutdown timeout
+  - shutdown timeout explicitly cancels the drain context, logs the timeout, and stops waiting
+  - worker entrypoint wires configured concurrency and shutdown timeout into the worker runtime
+- worker shutdown tests expanded:
+  - cancellation stops accepting new work
+  - in-flight jobs are awaited before `Run` returns
+  - shutdown timeout cancels an in-flight job context
+  - shutdown timeout returns even if an in-flight job ignores context cancellation
 
 ## What is pending implementation
-- shutdown drain behavior implementation + tests
 - contention/race integration tests in repository layer
 - README and operational docs updates reflecting finalized Phase 03 behavior
 
 ## Pairing mode
 Implementation can proceed in small reviewable chunks:
-1. worker runtime concurrency refactor
-2. worker concurrency/shutdown tests
+1. worker runtime concurrency refactor — complete
+2. worker concurrency/shutdown tests — complete
 3. repository contention tests
 4. docs + UAT evidence capture

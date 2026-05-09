@@ -16,9 +16,11 @@ Validate concurrency and worker-safety behavior under duplicate delivery and mul
 - [ ] verify throughput increases when concurrency is raised (sanity check)
 
 ### 3. Graceful shutdown drain
-- [ ] trigger shutdown during active processing
-- [ ] verify dequeue loop stops accepting new messages
-- [ ] verify in-flight jobs are allowed to finish up to timeout
+- [x] trigger shutdown during active processing
+- [x] verify dequeue loop stops accepting new messages
+- [x] verify in-flight jobs are allowed to finish up to timeout
+- [x] verify timeout cancels context-aware in-flight work explicitly
+- [x] verify timeout stops waiting when in-flight work does not exit on context cancellation
 
 ### 4. Repository contention safety
 - [ ] concurrent `MarkProcessing` calls on same job yield exactly one success
@@ -30,14 +32,14 @@ Validate concurrency and worker-safety behavior under duplicate delivery and mul
 - [ ] confirm worker context fields (`worker_instance`, transition result) are present in concurrent paths
 
 ## Command validation
-- [ ] `go test ./internal/worker ./internal/jobs/postgres ./internal/config`
-- [ ] `go test ./...`
-- [ ] `go vet ./...`
+- [x] `go test ./internal/worker ./internal/config ./cmd/worker`
+- [x] `go test ./...`
+- [x] `go vet ./...`
 
 ## Automated evidence captured
 - [ ] worker duplicate-delivery contention unit tests
 - [x] worker bounded-concurrency unit tests
-- [ ] worker graceful-shutdown drain tests
+- [x] worker graceful-shutdown drain tests
 - [ ] repository concurrent transition tests
 - [ ] repository concurrent due-retry claim tests
 

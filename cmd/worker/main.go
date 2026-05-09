@@ -82,6 +82,12 @@ func run(ctx context.Context, cfg config.WorkerConfig) error {
 	processor := &worker.DeterministicProcessor{FailJobID: cfg.ProcessorFailJobID}
 	workerLogger := logger.With("worker_concurrency", cfg.WorkerConcurrency)
 	w := worker.NewWorker(repo, q, processor, workerLogger)
+	if err := w.SetConcurrency(cfg.WorkerConcurrency); err != nil {
+		return fmt.Errorf("configure worker concurrency: %w", err)
+	}
+	if err := w.SetShutdownTimeout(cfg.ShutdownTimeout); err != nil {
+		return fmt.Errorf("configure worker shutdown timeout: %w", err)
+	}
 	if err := w.SetRetryRuntimeConfig(worker.RetryRuntimeConfig{
 		RetryDelay:        cfg.RetryDelay,
 		DispatchInterval:  cfg.RetryDispatchInterval,

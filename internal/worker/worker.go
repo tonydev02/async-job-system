@@ -17,6 +17,7 @@ const defaultRetryDispatchInterval = 1 * time.Minute
 const defaultRetryDispatchBatchSize = 10
 const defaultRetryReenqueueDelay = 1 * time.Minute
 const defaultWorkerConcurrency = 1
+const defaultShutdownTimeout = 10 * time.Second
 
 type Worker struct {
 	repo                        jobs.Repository
@@ -28,6 +29,7 @@ type Worker struct {
 	retryDispatchBatchSize      int
 	retryReenqueueDelay         time.Duration
 	concurrency                 int
+	shutdownTimeout             time.Duration
 }
 
 type RetryRuntimeConfig struct {
@@ -60,6 +62,7 @@ func NewWorker(repo jobs.Repository, queue queue.Queue, processor Processor, log
 		retryDispatchBatchSize:      defaultRetryDispatchBatchSize,
 		retryReenqueueDelay:         defaultRetryReenqueueDelay,
 		concurrency:                 defaultWorkerConcurrency,
+		shutdownTimeout:             defaultShutdownTimeout,
 	}
 }
 
@@ -84,17 +87,36 @@ func (w *Worker) SetRetryRuntimeConfig(cfg RetryRuntimeConfig) error {
 	return nil
 }
 
+func (w *Worker) SetConcurrency(concurrency int) error {
+	if concurrency <= 0 {
+		return errors.New("worker concurrency must be greater than zero")
+	}
+	w.concurrency = concurrency
+	return nil
+}
+
+func (w *Worker) SetShutdownTimeout(timeout time.Duration) error {
+	if timeout <= 0 {
+		return errors.New("worker shutdown timeout must be greater than zero")
+	}
+	w.shutdownTimeout = timeout
+	return nil
+}
+
 func (w *Worker) Run(ctx context.Context) {
 	go w.runRetryDispatcher(ctx)
 
 	msgs := make(chan queue.Message)
 	var wg sync.WaitGroup
+	drainCtx, cancelDrain := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelDrain()
+
 	for i := 0; i < w.concurrency; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for msg := range msgs {
-				if err := w.handleMessage(ctx, msg); err != nil {
+				if err := w.handleMessage(drainCtx, msg); err != nil {
 					w.logger.Error("failed to handle message", "error", err)
 				}
 			}
@@ -102,7 +124,7 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 	defer func() {
 		close(msgs)
-		wg.Wait()
+		w.waitForInFlightJobs(&wg, cancelDrain)
 	}()
 
 	for {
@@ -124,6 +146,26 @@ func (w *Worker) Run(ctx context.Context) {
 			case msgs <- msg:
 			}
 		}
+	}
+}
+
+func (w *Worker) waitForInFlightJobs(wg *sync.WaitGroup, cancelDrain context.CancelFunc) {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	timer := time.NewTimer(w.shutdownTimeout)
+	defer timer.Stop()
+
+	select {
+	case <-done:
+		return
+	case <-timer.C:
+		w.logger.Warn("worker shutdown drain timeout expired", "timeout", w.shutdownTimeout)
+		cancelDrain()
+		return
 	}
 }
 

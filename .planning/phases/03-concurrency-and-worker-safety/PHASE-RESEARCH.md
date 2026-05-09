@@ -27,6 +27,12 @@ Reason:
 - minimizes abandoned in-flight jobs
 - keeps runtime behavior deterministic and testable
 
+Implementation direction:
+- keep the run context responsible for dequeue acceptance and retry dispatch lifetime
+- pass in-flight job handlers a drain context derived from the run context without its cancellation signal
+- when the run context is canceled, close the internal work channel and wait for handlers
+- if the configured drain timeout expires, cancel the drain context so context-aware processors/repository calls can abort explicitly and stop waiting for the drain
+
 ### Logging contract under concurrency
 Include `job_id` and worker context (`worker_instance`, transition outcome) in concurrent paths.
 Reason:

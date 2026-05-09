@@ -534,6 +534,261 @@ func TestRun_StartsRetryDispatcher(t *testing.T) {
 	}
 }
 
+func TestRun_CancelStopsAcceptingNewWork(t *testing.T) {
+	jobID := uuid.New()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	repo := &fakeRepo{
+		markProcessingFn: func(ctx context.Context, id uuid.UUID) (bool, error) {
+			return true, nil
+		},
+		markCompletedFn: func(ctx context.Context, id uuid.UUID, result json.RawMessage) (bool, error) {
+			return true, nil
+		},
+	}
+
+	var dequeueCalls atomic.Int32
+	q := &fakeQueue{
+		dequeueFn: func(ctx context.Context) (queue.Message, error) {
+			if dequeueCalls.Add(1) == 1 {
+				return queue.Message{JobID: jobID}, nil
+			}
+			<-ctx.Done()
+			return queue.Message{}, ctx.Err()
+		},
+	}
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var processCalls atomic.Int32
+	processor := &fakeProcessor{
+		processFn: func(ctx context.Context, id uuid.UUID) (json.RawMessage, error) {
+			processCalls.Add(1)
+			close(started)
+			<-release
+			return json.RawMessage(`{"ok":true}`), nil
+		},
+	}
+
+	worker := newTestWorker(repo, q, processor)
+	done := make(chan struct{})
+	go func() {
+		worker.Run(ctx)
+		close(done)
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected in-flight job to start")
+	}
+
+	cancel()
+
+	select {
+	case <-done:
+		t.Fatal("worker.Run returned before in-flight job drained")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("worker.Run did not stop after in-flight job completed")
+	}
+
+	if got := processCalls.Load(); got != 1 {
+		t.Fatalf("expected exactly one processed job after cancellation, got %d", got)
+	}
+}
+
+func TestRun_CancelDrainsInFlightJobsWithoutCancelingJobContext(t *testing.T) {
+	jobID := uuid.New()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	repo := &fakeRepo{
+		markProcessingFn: func(ctx context.Context, id uuid.UUID) (bool, error) {
+			return true, nil
+		},
+		markCompletedFn: func(ctx context.Context, id uuid.UUID, result json.RawMessage) (bool, error) {
+			return true, nil
+		},
+	}
+	q := &fakeQueue{
+		dequeueFn: func(ctx context.Context) (queue.Message, error) {
+			return queue.Message{JobID: jobID}, nil
+		},
+	}
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	processor := &fakeProcessor{
+		processFn: func(ctx context.Context, id uuid.UUID) (json.RawMessage, error) {
+			close(started)
+			<-release
+			if err := ctx.Err(); err != nil {
+				t.Fatalf("expected in-flight job context to remain active during drain, got %v", err)
+			}
+			return json.RawMessage(`{"ok":true}`), nil
+		},
+	}
+
+	worker := newTestWorker(repo, q, processor)
+	worker.shutdownTimeout = time.Second
+	done := make(chan struct{})
+	go func() {
+		worker.Run(ctx)
+		close(done)
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected in-flight job to start")
+	}
+
+	cancel()
+
+	select {
+	case <-done:
+		t.Fatal("worker.Run returned before in-flight job completed")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("worker.Run did not return after in-flight job completed")
+	}
+}
+
+func TestRun_ShutdownTimeoutCancelsInFlightJobContext(t *testing.T) {
+	jobID := uuid.New()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	repo := &fakeRepo{
+		markProcessingFn: func(ctx context.Context, id uuid.UUID) (bool, error) {
+			return true, nil
+		},
+		handleProcessingFailureFn: func(ctx context.Context, id uuid.UUID, errMsg string, retryDelay time.Duration) (jobs.FailureTransitionResult, error) {
+			return jobs.FailureTransitionResult{
+				Applied:     true,
+				Decision:    jobs.FailureDecisionTerminal,
+				Attempt:     1,
+				MaxAttempts: 1,
+			}, nil
+		},
+	}
+	q := &fakeQueue{
+		dequeueFn: func(ctx context.Context) (queue.Message, error) {
+			return queue.Message{JobID: jobID}, nil
+		},
+	}
+
+	started := make(chan struct{})
+	contextCanceled := make(chan error, 1)
+	processor := &fakeProcessor{
+		processFn: func(ctx context.Context, id uuid.UUID) (json.RawMessage, error) {
+			close(started)
+			<-ctx.Done()
+			contextCanceled <- ctx.Err()
+			return nil, ctx.Err()
+		},
+	}
+
+	worker := newTestWorker(repo, q, processor)
+	worker.shutdownTimeout = 25 * time.Millisecond
+	done := make(chan struct{})
+	go func() {
+		worker.Run(ctx)
+		close(done)
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected in-flight job to start")
+	}
+
+	cancel()
+
+	select {
+	case err := <-contextCanceled:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected in-flight job context cancellation, got %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected shutdown timeout to cancel in-flight job context")
+	}
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("worker.Run did not return after shutdown timeout canceled in-flight job")
+	}
+}
+
+func TestRun_ShutdownTimeoutReturnsWhenInFlightJobIgnoresContext(t *testing.T) {
+	jobID := uuid.New()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	repo := &fakeRepo{
+		markProcessingFn: func(ctx context.Context, id uuid.UUID) (bool, error) {
+			return true, nil
+		},
+		markCompletedFn: func(ctx context.Context, id uuid.UUID, result json.RawMessage) (bool, error) {
+			return true, nil
+		},
+	}
+	q := &fakeQueue{
+		dequeueFn: func(ctx context.Context) (queue.Message, error) {
+			return queue.Message{JobID: jobID}, nil
+		},
+	}
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	processor := &fakeProcessor{
+		processFn: func(ctx context.Context, id uuid.UUID) (json.RawMessage, error) {
+			close(started)
+			<-release
+			return json.RawMessage(`{"ok":true}`), nil
+		},
+	}
+
+	worker := newTestWorker(repo, q, processor)
+	worker.shutdownTimeout = 25 * time.Millisecond
+	done := make(chan struct{})
+	go func() {
+		worker.Run(ctx)
+		close(done)
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected in-flight job to start")
+	}
+
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("worker.Run did not return after shutdown timeout")
+	}
+
+	close(release)
+}
+
 func TestDispatchDueRetries_ClaimsAndEnqueues(t *testing.T) {
 	id1 := uuid.New()
 	id2 := uuid.New()
@@ -797,5 +1052,46 @@ func TestSetRetryRuntimeConfig_InvalidValues(t *testing.T) {
 				t.Fatal("expected error, got nil")
 			}
 		})
+	}
+}
+
+func TestSetConcurrency_AppliesValue(t *testing.T) {
+	worker := newTestWorker(&fakeRepo{}, &fakeQueue{}, &fakeProcessor{})
+
+	if err := worker.SetConcurrency(3); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if worker.concurrency != 3 {
+		t.Fatalf("unexpected concurrency: got %d want 3", worker.concurrency)
+	}
+}
+
+func TestSetConcurrency_InvalidValue(t *testing.T) {
+	worker := newTestWorker(&fakeRepo{}, &fakeQueue{}, &fakeProcessor{})
+
+	if err := worker.SetConcurrency(0); err == nil {
+		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestSetShutdownTimeout_AppliesValue(t *testing.T) {
+	worker := newTestWorker(&fakeRepo{}, &fakeQueue{}, &fakeProcessor{})
+	timeout := 2 * time.Second
+
+	if err := worker.SetShutdownTimeout(timeout); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if worker.shutdownTimeout != timeout {
+		t.Fatalf("unexpected shutdown timeout: got %s want %s", worker.shutdownTimeout, timeout)
+	}
+}
+
+func TestSetShutdownTimeout_InvalidValue(t *testing.T) {
+	worker := newTestWorker(&fakeRepo{}, &fakeQueue{}, &fakeProcessor{})
+
+	if err := worker.SetShutdownTimeout(0); err == nil {
+		t.Fatal("expected error, got nil")
 	}
 }
