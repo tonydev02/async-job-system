@@ -34,9 +34,13 @@ Phase 03 implementation is in progress with bounded in-process worker-pool runti
   - worker entrypoint wires configured concurrency and shutdown timeout into the worker runtime
 - worker shutdown tests expanded:
   - cancellation stops accepting new work
+  - cancellation prevents an already-dequeued pending message from entering processing while allowing the active job to finish
   - in-flight jobs are awaited before `Run` returns
   - shutdown timeout cancels an in-flight job context
   - shutdown timeout returns even if an in-flight job ignores context cancellation
+- worker duplicate-delivery and concurrency-cap tests expanded:
+  - concurrent duplicate deliveries of the same `job_id` race for `pending -> processing` and only one claim proceeds to processing/completion
+  - active processor count is asserted not to exceed configured worker concurrency across a multi-job run
 - worker logging traceability:
   - worker-pool handlers attach stable `worker_slot` context to per-job logs
   - claim win/skip paths log `job_id`, transition name, applied flag, and outcome

@@ -20,6 +20,8 @@ import (
 )
 
 type fakeRepo struct {
+	mu sync.Mutex
+
 	createFn                  func(ctx context.Context, params jobs.CreateParams) (jobs.Job, error)
 	getByIDFn                 func(ctx context.Context, id uuid.UUID) (jobs.Job, error)
 	markProcessingFn          func(ctx context.Context, id uuid.UUID) (bool, error)
@@ -54,83 +56,109 @@ type fakeRepo struct {
 }
 
 func (f *fakeRepo) Create(ctx context.Context, params jobs.CreateParams) (jobs.Job, error) {
+	f.mu.Lock()
 	f.createCalls++
-	if f.createFn != nil {
-		return f.createFn(ctx, params)
+	fn := f.createFn
+	f.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, params)
 	}
 	panic("unexpected call: fakeRepo.Create")
 }
 
 func (f *fakeRepo) GetByID(ctx context.Context, id uuid.UUID) (jobs.Job, error) {
+	f.mu.Lock()
 	f.getByIDCalls++
 	f.lastGetByIDID = id
-	if f.getByIDFn != nil {
-		return f.getByIDFn(ctx, id)
+	fn := f.getByIDFn
+	f.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, id)
 	}
 	panic("unexpected call: fakeRepo.GetByID")
 }
 
 func (f *fakeRepo) MarkProcessing(ctx context.Context, id uuid.UUID) (bool, error) {
+	f.mu.Lock()
 	f.markProcessingCalls++
 	f.lastMarkProcessingID = id
-	if f.markProcessingFn != nil {
-		return f.markProcessingFn(ctx, id)
+	fn := f.markProcessingFn
+	f.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, id)
 	}
 	panic("unexpected call: fakeRepo.MarkProcessing")
 }
 
 func (f *fakeRepo) MarkCompleted(ctx context.Context, id uuid.UUID, result json.RawMessage) (bool, error) {
+	f.mu.Lock()
 	f.markCompletedCalls++
 	f.lastMarkCompletedID = id
 	f.lastMarkCompletedRes = append(json.RawMessage(nil), result...)
-	if f.markCompletedFn != nil {
-		return f.markCompletedFn(ctx, id, result)
+	fn := f.markCompletedFn
+	f.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, id, result)
 	}
 	panic("unexpected call: fakeRepo.MarkCompleted")
 }
 
 func (f *fakeRepo) MarkFailed(ctx context.Context, id uuid.UUID, errMsg string) (bool, error) {
+	f.mu.Lock()
 	f.markFailedCalls++
 	f.lastMarkFailedID = id
 	f.lastMarkFailedErr = errMsg
-	if f.markFailedFn != nil {
-		return f.markFailedFn(ctx, id, errMsg)
+	fn := f.markFailedFn
+	f.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, id, errMsg)
 	}
 	panic("unexpected call: fakeRepo.MarkFailed")
 }
 
 func (f *fakeRepo) HandleProcessingFailure(ctx context.Context, id uuid.UUID, errMsg string, retryDelay time.Duration) (jobs.FailureTransitionResult, error) {
+	f.mu.Lock()
 	f.handleProcessingFailureCalls++
 	f.lastHandleFailureID = id
 	f.lastHandleFailureErr = errMsg
 	f.lastHandleFailureDelay = retryDelay
-	if f.handleProcessingFailureFn != nil {
-		return f.handleProcessingFailureFn(ctx, id, errMsg, retryDelay)
+	fn := f.handleProcessingFailureFn
+	f.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, id, errMsg, retryDelay)
 	}
 	panic("unexpected call: fakeRepo.HandleProcessingFailure")
 }
 
 func (f *fakeRepo) ClaimDueRetries(ctx context.Context, now time.Time, limit int) ([]uuid.UUID, error) {
+	f.mu.Lock()
 	f.claimDueRetriesCalls++
 	f.lastClaimDueRetriesNow = now
 	f.lastClaimDueRetriesLimit = limit
-	if f.claimDueRetriesFn != nil {
-		return f.claimDueRetriesFn(ctx, now, limit)
+	fn := f.claimDueRetriesFn
+	f.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, now, limit)
 	}
 	return nil, nil
 }
 
 func (f *fakeRepo) RescheduleRetry(ctx context.Context, id uuid.UUID, delay time.Duration) (bool, error) {
+	f.mu.Lock()
 	f.rescheduleRetryCalls++
 	f.lastRescheduleRetryID = id
 	f.lastRescheduleRetryDelay = delay
-	if f.rescheduleRetryFn != nil {
-		return f.rescheduleRetryFn(ctx, id, delay)
+	fn := f.rescheduleRetryFn
+	f.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, id, delay)
 	}
 	return false, nil
 }
 
 type fakeQueue struct {
+	mu sync.Mutex
+
 	enqueueFn func(ctx context.Context, msg queue.Message) error
 	dequeueFn func(ctx context.Context) (queue.Message, error)
 
@@ -142,24 +170,32 @@ type fakeQueue struct {
 }
 
 func (f *fakeQueue) Enqueue(ctx context.Context, msg queue.Message) error {
+	f.mu.Lock()
 	f.enqueueCalls++
 	f.lastEnqueueMsg = msg
 	f.enqueueMsgs = append(f.enqueueMsgs, msg)
-	if f.enqueueFn != nil {
-		return f.enqueueFn(ctx, msg)
+	fn := f.enqueueFn
+	f.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, msg)
 	}
 	panic("unexpected call: fakeQueue.Enqueue")
 }
 
 func (f *fakeQueue) Dequeue(ctx context.Context) (queue.Message, error) {
+	f.mu.Lock()
 	f.dequeueCalls++
-	if f.dequeueFn != nil {
-		return f.dequeueFn(ctx)
+	fn := f.dequeueFn
+	f.mu.Unlock()
+	if fn != nil {
+		return fn(ctx)
 	}
 	panic("unexpected call: fakeQueue.Dequeue")
 }
 
 type fakeProcessor struct {
+	mu sync.Mutex
+
 	processFn func(ctx context.Context, jobID uuid.UUID) (json.RawMessage, error)
 
 	processCalls int
@@ -167,10 +203,13 @@ type fakeProcessor struct {
 }
 
 func (f *fakeProcessor) Process(ctx context.Context, jobID uuid.UUID) (json.RawMessage, error) {
+	f.mu.Lock()
 	f.processCalls++
 	f.lastJobID = jobID
-	if f.processFn != nil {
-		return f.processFn(ctx, jobID)
+	fn := f.processFn
+	f.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, jobID)
 	}
 	panic("unexpected call: fakeProcessor.Process")
 }
@@ -572,6 +611,198 @@ func TestRun_UsesBoundedWorkerPoolConcurrency(t *testing.T) {
 	}
 }
 
+func TestRun_DuplicateDeliveryConcurrentOnlyOneProcessingClaimWins(t *testing.T) {
+	jobID := uuid.New()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	claimEntered := make(chan struct{}, 2)
+	releaseClaims := make(chan struct{})
+	var claimed atomic.Bool
+
+	repo := &fakeRepo{
+		markProcessingFn: func(ctx context.Context, id uuid.UUID) (bool, error) {
+			if id != jobID {
+				return false, errors.New("unexpected job ID")
+			}
+			claimEntered <- struct{}{}
+			<-releaseClaims
+			return claimed.CompareAndSwap(false, true), nil
+		},
+		markCompletedFn: func(ctx context.Context, id uuid.UUID, result json.RawMessage) (bool, error) {
+			return true, nil
+		},
+	}
+
+	var dequeued atomic.Int32
+	q := &fakeQueue{
+		dequeueFn: func(ctx context.Context) (queue.Message, error) {
+			if dequeued.Add(1) <= 2 {
+				return queue.Message{JobID: jobID}, nil
+			}
+			<-ctx.Done()
+			return queue.Message{}, ctx.Err()
+		},
+	}
+
+	processed := make(chan struct{}, 1)
+	processor := &fakeProcessor{
+		processFn: func(ctx context.Context, id uuid.UUID) (json.RawMessage, error) {
+			processed <- struct{}{}
+			return json.RawMessage(`{"ok":true}`), nil
+		},
+	}
+
+	worker := newTestWorker(repo, q, processor)
+	if err := worker.SetConcurrency(2); err != nil {
+		t.Fatalf("unexpected concurrency error: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		worker.Run(ctx)
+		close(done)
+	}()
+
+	for i := 0; i < 2; i++ {
+		select {
+		case <-claimEntered:
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("expected duplicate deliveries to race for processing claim")
+		}
+	}
+
+	close(releaseClaims)
+
+	select {
+	case <-processed:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected exactly one duplicate delivery to process")
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("worker.Run did not stop after duplicate-delivery test cancellation")
+	}
+
+	if repo.markProcessingCalls != 2 {
+		t.Fatalf("expected two processing claim attempts, got %d", repo.markProcessingCalls)
+	}
+	if processor.processCalls != 1 {
+		t.Fatalf("expected one processor call, got %d", processor.processCalls)
+	}
+	if repo.markCompletedCalls != 1 {
+		t.Fatalf("expected one completed transition, got %d", repo.markCompletedCalls)
+	}
+}
+
+func TestRun_ActiveProcessingNeverExceedsConfiguredConcurrency(t *testing.T) {
+	const configuredConcurrency = 3
+	jobIDs := make([]uuid.UUID, 9)
+	for i := range jobIDs {
+		jobIDs[i] = uuid.New()
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var dequeueMu sync.Mutex
+	nextJob := 0
+	q := &fakeQueue{
+		dequeueFn: func(ctx context.Context) (queue.Message, error) {
+			dequeueMu.Lock()
+			defer dequeueMu.Unlock()
+			if nextJob < len(jobIDs) {
+				msg := queue.Message{JobID: jobIDs[nextJob]}
+				nextJob++
+				return msg, nil
+			}
+			<-ctx.Done()
+			return queue.Message{}, ctx.Err()
+		},
+	}
+
+	completed := make(chan struct{}, len(jobIDs))
+	repo := &fakeRepo{
+		markProcessingFn: func(ctx context.Context, id uuid.UUID) (bool, error) {
+			return true, nil
+		},
+		markCompletedFn: func(ctx context.Context, id uuid.UUID, result json.RawMessage) (bool, error) {
+			completed <- struct{}{}
+			return true, nil
+		},
+	}
+
+	release := make(chan struct{})
+	started := make(chan struct{}, len(jobIDs))
+	var active int32
+	var maxActive int32
+	processor := &fakeProcessor{
+		processFn: func(ctx context.Context, jobID uuid.UUID) (json.RawMessage, error) {
+			cur := atomic.AddInt32(&active, 1)
+			for {
+				prev := atomic.LoadInt32(&maxActive)
+				if cur <= prev || atomic.CompareAndSwapInt32(&maxActive, prev, cur) {
+					break
+				}
+			}
+			started <- struct{}{}
+			<-release
+			atomic.AddInt32(&active, -1)
+			return json.RawMessage(`{"ok":true}`), nil
+		},
+	}
+
+	worker := newTestWorker(repo, q, processor)
+	if err := worker.SetConcurrency(configuredConcurrency); err != nil {
+		t.Fatalf("unexpected concurrency error: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		worker.Run(ctx)
+		close(done)
+	}()
+
+	for i := 0; i < configuredConcurrency; i++ {
+		select {
+		case <-started:
+		case <-time.After(500 * time.Millisecond):
+			t.Fatalf("expected %d jobs to start", configuredConcurrency)
+		}
+	}
+
+	select {
+	case <-started:
+		t.Fatalf("expected active processing to be capped at %d", configuredConcurrency)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+
+	for i := 0; i < len(jobIDs); i++ {
+		select {
+		case <-completed:
+		case <-time.After(500 * time.Millisecond):
+			t.Fatalf("expected job %d to complete", i+1)
+		}
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("worker.Run did not stop after concurrency-cap test cancellation")
+	}
+
+	if got := atomic.LoadInt32(&maxActive); got > configuredConcurrency {
+		t.Fatalf("expected max active processors <= %d, got %d", configuredConcurrency, got)
+	}
+}
+
 func TestRun_StartsRetryDispatcher(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -676,6 +907,98 @@ func TestRun_CancelStopsAcceptingNewWork(t *testing.T) {
 
 	if got := processCalls.Load(); got != 1 {
 		t.Fatalf("expected exactly one processed job after cancellation, got %d", got)
+	}
+}
+
+func TestRun_CancelStopsIntakeWhileAllowingInFlightCompletion(t *testing.T) {
+	firstJobID := uuid.New()
+	secondJobID := uuid.New()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	repo := &fakeRepo{
+		markProcessingFn: func(ctx context.Context, id uuid.UUID) (bool, error) {
+			return true, nil
+		},
+		markCompletedFn: func(ctx context.Context, id uuid.UUID, result json.RawMessage) (bool, error) {
+			return true, nil
+		},
+	}
+
+	secondDequeued := make(chan struct{})
+	var dequeueCalls atomic.Int32
+	q := &fakeQueue{
+		dequeueFn: func(ctx context.Context) (queue.Message, error) {
+			switch dequeueCalls.Add(1) {
+			case 1:
+				return queue.Message{JobID: firstJobID}, nil
+			case 2:
+				close(secondDequeued)
+				return queue.Message{JobID: secondJobID}, nil
+			default:
+				<-ctx.Done()
+				return queue.Message{}, ctx.Err()
+			}
+		},
+	}
+
+	started := make(chan uuid.UUID, 1)
+	release := make(chan struct{})
+	processor := &fakeProcessor{
+		processFn: func(ctx context.Context, id uuid.UUID) (json.RawMessage, error) {
+			started <- id
+			<-release
+			return json.RawMessage(`{"ok":true}`), nil
+		},
+	}
+
+	worker := newTestWorker(repo, q, processor)
+	if err := worker.SetConcurrency(1); err != nil {
+		t.Fatalf("unexpected concurrency error: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		worker.Run(ctx)
+		close(done)
+	}()
+
+	select {
+	case id := <-started:
+		if id != firstJobID {
+			t.Fatalf("expected first job to start, got %s", id)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected first in-flight job to start")
+	}
+
+	select {
+	case <-secondDequeued:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected second message to be dequeued before cancellation")
+	}
+
+	cancel()
+
+	select {
+	case <-done:
+		t.Fatal("worker.Run returned before in-flight job completed")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("worker.Run did not stop after in-flight job completed")
+	}
+
+	if processor.processCalls != 1 {
+		t.Fatalf("expected cancellation to prevent second job processing, got %d processor calls", processor.processCalls)
+	}
+	if repo.markCompletedCalls != 1 {
+		t.Fatalf("expected only the in-flight job to complete, got %d completed transitions", repo.markCompletedCalls)
 	}
 }
 

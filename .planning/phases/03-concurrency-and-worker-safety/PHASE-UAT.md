@@ -6,18 +6,20 @@ Validate concurrency and worker-safety behavior under duplicate delivery and mul
 ## Test cases
 
 ### 1. Duplicate delivery safety
-- [ ] enqueue duplicate messages with the same `job_id`
-- [ ] verify only one handler path applies `pending -> processing`
-- [ ] verify duplicate attempts are skipped without duplicate terminal transitions
+- [x] add worker test coverage for duplicate messages with the same `job_id`
+- [x] verify only one handler path applies `pending -> processing`
+- [x] verify duplicate attempts are skipped without duplicate terminal transitions
 
 ### 2. Bounded in-process concurrency
 - [x] run worker with explicit bounded worker count in runtime test configuration
 - [x] verify active processing does not exceed configured bound
+- [x] add explicit worker test coverage that active processing never exceeds configured concurrency
 - [ ] verify throughput increases when concurrency is raised (sanity check)
 
 ### 3. Graceful shutdown drain
 - [x] trigger shutdown during active processing
 - [x] verify dequeue loop stops accepting new messages
+- [x] add explicit worker test coverage that cancellation stops intake while allowing in-flight completion
 - [x] verify in-flight jobs are allowed to finish up to timeout
 - [x] verify timeout cancels context-aware in-flight work explicitly
 - [x] verify timeout stops waiting when in-flight work does not exit on context cancellation
@@ -37,7 +39,7 @@ Validate concurrency and worker-safety behavior under duplicate delivery and mul
 - [x] `go vet ./...`
 
 ## Automated evidence captured
-- [ ] worker duplicate-delivery contention unit tests
+- [x] worker duplicate-delivery contention unit tests
 - [x] worker bounded-concurrency unit tests
 - [x] worker graceful-shutdown drain tests
 - [ ] repository concurrent transition tests

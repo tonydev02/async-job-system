@@ -51,6 +51,10 @@ Harden duplicate-delivery handling and multi-worker race safety while preserving
 - Phase 03 worker logging traceability slice implemented:
   - concurrent worker-pool handlers attach stable `worker_slot` context to per-job logs
   - guarded transition logs include `job_id`, transition name, applied flag, and outcome
+- Phase 03 worker contention coverage slice implemented:
+  - duplicate deliveries of the same `job_id` race for a processing claim with only one processing/completion path
+  - active processing count is asserted not to exceed configured worker concurrency
+  - cancellation is asserted to stop intake while allowing the in-flight job to complete
 
 ## Next milestone
 implement Phase 03 repository contention tests in small reviewable steps
