@@ -2,7 +2,7 @@
 
 ## Current Snapshot
 - Current phase: `03-concurrency-and-worker-safety`
-- Status: in progress (planning finalized; implementation pending)
+- Status: done (implementation, docs, and UAT evidence complete)
 - Next phase: `04-visibility-timeout-and-recovery`
 
 ## Phase Map
@@ -16,7 +16,7 @@ Status: done.
 
 3. `03-concurrency-and-worker-safety`
 Goal: harden duplicate delivery handling and multi-worker race safety.
-Status: in progress.
+Status: done.
 
 4. `04-visibility-timeout-and-recovery`
 Goal: recover jobs stuck in `processing` after crashes/timeouts.

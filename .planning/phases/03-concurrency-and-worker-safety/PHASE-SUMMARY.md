@@ -1,13 +1,13 @@
 # PHASE-SUMMARY.md
 
 ## Outcome
-Phase 03 implementation is in progress with bounded in-process worker-pool runtime, graceful shutdown-drain behavior, and repository contention coverage now implemented.
+Phase 03 is implemented and validated. The worker now supports configurable bounded in-process concurrency, drains in-flight work on shutdown up to a configured timeout, and relies on DB-guarded lifecycle transitions to remain safe under duplicate delivery and concurrent repository callers.
 
 ## What is finalized
 - phase scope, goals, non-goals, and acceptance criteria
 - concurrency direction (`WORKER_CONCURRENCY`, bounded worker pool)
-- shutdown behavior target (stop dequeue + drain in-flight work with timeout)
-- race-safety validation targets for worker and repository layers
+- shutdown behavior (stop dequeue + drain in-flight work with timeout)
+- race-safety validation coverage for worker and repository layers
 
 ## What is implemented
 - planning artifacts created for Phase 03:
@@ -50,13 +50,16 @@ Phase 03 implementation is in progress with bounded in-process worker-pool runti
   - concurrent `MarkCompleted`/`MarkFailed` terminal attempts from `processing` assert at most one applied terminal transition
   - concurrent `ClaimDueRetries` callers assert claimed IDs are unique across callers
 
-## What is pending implementation
-- README and operational docs updates reflecting finalized Phase 03 behavior
+## Validation evidence
+- `go test ./internal/worker ./internal/config ./cmd/worker` passed on 2026-05-12.
+- `go test ./internal/jobs/postgres` passed on 2026-05-12.
+- `go test ./...` passed on 2026-05-12.
+- `go vet ./...` passed on 2026-05-12.
 
 ## Pairing mode
-Implementation can proceed in small reviewable chunks:
+Implemented in small reviewable chunks:
 1. worker runtime concurrency refactor — complete
 2. worker concurrency/shutdown tests — complete
 3. worker concurrent logging traceability — complete
 4. repository contention tests — complete
-5. docs + UAT evidence capture
+5. docs + UAT evidence capture — complete

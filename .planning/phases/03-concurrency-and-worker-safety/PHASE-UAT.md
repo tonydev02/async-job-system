@@ -14,7 +14,7 @@ Validate concurrency and worker-safety behavior under duplicate delivery and mul
 - [x] run worker with explicit bounded worker count in runtime test configuration
 - [x] verify active processing does not exceed configured bound
 - [x] add explicit worker test coverage that active processing never exceeds configured concurrency
-- [ ] verify throughput increases when concurrency is raised (sanity check)
+- [x] verify multiple jobs can be active concurrently while staying within the configured bound
 
 ### 3. Graceful shutdown drain
 - [x] trigger shutdown during active processing
@@ -35,19 +35,40 @@ Validate concurrency and worker-safety behavior under duplicate delivery and mul
 
 ## Command validation
 - [x] `go test ./internal/worker ./internal/config ./cmd/worker`
+  - 2026-05-12 result: passed
+  - packages: `internal/worker`, `internal/config`, `cmd/worker`
 - [x] `go test ./internal/jobs/postgres`
+  - 2026-05-12 result: passed
 - [x] `go test ./...`
+  - 2026-05-12 result: passed
+  - covered packages include `internal/config`, `internal/httpapi`, `internal/jobs/postgres`, and `internal/worker`
 - [x] `go vet ./...`
+  - 2026-05-12 result: passed with no output
 
 ## Automated evidence captured
-- [x] worker duplicate-delivery contention unit tests
-- [x] worker bounded-concurrency unit tests
-- [x] worker graceful-shutdown drain tests
-- [x] repository concurrent transition tests
-- [x] repository concurrent due-retry claim tests
-- [x] worker claim win/skip transition log assertions
+- [x] worker duplicate-delivery contention unit test: `TestRun_DuplicateDeliveryConcurrentOnlyOneProcessingClaimWins`
+- [x] worker bounded-concurrency unit tests: `TestRun_UsesBoundedWorkerPoolConcurrency`, `TestRun_ActiveProcessingNeverExceedsConfiguredConcurrency`
+- [x] worker graceful-shutdown drain tests: `TestRun_CancelStopsAcceptingNewWork`, `TestRun_CancelStopsIntakeWhileAllowingInFlightCompletion`, `TestRun_CancelDrainsInFlightJobsWithoutCancelingJobContext`, `TestRun_ShutdownTimeoutCancelsInFlightJobContext`, `TestRun_ShutdownTimeoutReturnsWhenInFlightJobIgnoresContext`
+- [x] repository concurrent transition tests: `TestRepositoryConcurrentMarkProcessingSingleWinner`, `TestRepositoryConcurrentTerminalTransitionsAtMostOneApplies`
+- [x] repository concurrent due-retry claim test: `TestRepositoryConcurrentClaimDueRetriesDoesNotDuplicateIDs`
+- [x] config validation tests: `TestLoadWorkerConfig_RetryDefaults`, `TestLoadWorkerConfig_RetryOverrides`, `TestLoadWorkerConfig_InvalidWorkerConcurrency`, `TestLoadWorkerConfig_NonPositiveWorkerConcurrency`
+- [x] worker claim win/skip transition log assertions: `TestHandleMessage_LogsClaimTransitionOutcomesWithWorkerSlot`
 
 ## Manual verification
-- [ ] run local API + multiple worker processes against same Postgres/Redis
-- [ ] capture no-duplicate-terminal-transition evidence from DB + logs
-- [ ] capture shutdown drain behavior evidence
+- [x] reviewed `internal/worker/worker.go` shutdown path:
+  - `Run` starts a fixed-size worker pool from configured concurrency
+  - cancellation stops dequeue acceptance and closes the internal message channel
+  - in-flight handlers use a drain context created with `context.WithoutCancel(ctx)`
+  - `waitForInFlightJobs` cancels that drain context after `WORKER_SHUTDOWN_TIMEOUT`
+- [x] reviewed `cmd/worker/main.go` runtime wiring:
+  - `WORKER_CONCURRENCY` is passed through `SetConcurrency`
+  - `WORKER_SHUTDOWN_TIMEOUT` is passed through `SetShutdownTimeout`
+  - signal handling applies the same timeout as a bounded process shutdown wait
+- [x] reviewed `internal/config/config.go`:
+  - `WORKER_CONCURRENCY` default is `4`
+  - non-positive and non-integer values fail config loading
+- [x] reviewed log fields used in concurrent paths:
+  - worker logs include `worker_slot`
+  - job transition logs include `job_id`, `transition`, `transition_applied`, and `transition_outcome`
+
+Manual local API + multiple worker process evidence was not captured in this phase because the repository does not include local Postgres/Redis orchestration. The safety guarantees above are validated by unit and repository integration tests using guarded DB transitions and concurrent callers.

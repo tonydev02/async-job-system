@@ -7,7 +7,7 @@ Async Job Processing System
 03 — Concurrency and Worker Safety
 
 ## Current status
-Phase 03 implementation in progress; bounded worker-pool runtime, graceful shutdown-drain, and repository contention slices are complete.
+Phase 03 implementation and documentation are complete; bounded worker-pool runtime, graceful shutdown-drain behavior, repository contention coverage, and UAT evidence are captured.
 
 ## Objective
 Harden duplicate-delivery handling and multi-worker race safety while preserving explicit DB-backed lifecycle transitions.
@@ -59,9 +59,13 @@ Harden duplicate-delivery handling and multi-worker race safety while preserving
   - concurrent `MarkProcessing` calls on the same job yield exactly one successful guarded transition
   - concurrent terminal transition attempts apply at most once
   - concurrent `ClaimDueRetries` calls do not return duplicate job IDs across callers
+- Phase 03 documentation and UAT evidence captured:
+  - phase summary reflects implemented worker concurrency, shutdown, logging, and contention behavior
+  - UAT records passing command validation from 2026-05-12
+  - README documents worker concurrency defaults and shutdown behavior
 
 ## Next milestone
-capture any remaining Phase 03 documentation and UAT evidence
+begin Phase 04 planning for visibility timeout and stuck `processing` recovery
 
 ## Risks / open questions
 - repository contention tests use explicit start barriers and persisted-state assertions to avoid flaky timing-only checks
