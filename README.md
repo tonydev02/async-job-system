@@ -8,6 +8,7 @@ Core goals:
 - explicit job lifecycle persistence
 - bounded retries and terminal failure handling
 - worker reliability under duplicate delivery
+- bounded worker concurrency and graceful shutdown behavior
 - operationally useful logs and testable design
 
 ## What This Project Focuses On
@@ -43,6 +44,7 @@ Retry Dispatcher Loop (in worker runtime)
 - Redis is transport/buffering, not truth.
 - Every state transition is persisted in DB.
 - Worker behavior is explicit and traceable in logs (`job_id` included).
+- Worker concurrency is bounded inside each worker process.
 
 ## Job Lifecycle Model
 
@@ -60,9 +62,26 @@ Failure transition from `processing` is atomic:
 
 Due retries are claimed with `FOR UPDATE SKIP LOCKED` semantics in the repository layer to support concurrent workers safely.
 
+## Worker Concurrency And Shutdown
+
+`WORKER_CONCURRENCY` controls how many jobs one worker process can process at the same time.
+
+- Default: `4` when loaded through `internal/config`.
+- Valid values: integers greater than `0`.
+- Runtime behavior: the worker starts a fixed-size in-process worker pool and feeds dequeued messages into that pool. This avoids unbounded goroutine creation while still allowing multiple jobs to make progress concurrently.
+
+Duplicate delivery remains safe because each dequeued message must first win the guarded Postgres transition from `pending` to `processing`. If another worker or worker slot already claimed the job, the transition is skipped and the duplicate message does not run the processor or apply another terminal transition.
+
+Shutdown is drain-oriented:
+
+- On cancellation or process signal, the worker stops accepting newly dequeued messages.
+- The internal work channel is closed so idle worker slots exit.
+- In-flight jobs keep running on a drain context so normal completion can persist final state.
+- `WORKER_SHUTDOWN_TIMEOUT` bounds the drain wait. Its default is `10s`; when it expires, the drain context is canceled so context-aware processors and repository calls can stop.
+
 ## Current Phase Status
 
-Phase 02 (Retries and Failure Handling) is in progress.
+Phase 03 (Concurrency and Worker Safety) is complete.
 
 Implemented:
 
@@ -75,11 +94,17 @@ Implemented:
   - `RETRY_DISPATCH_INTERVAL`
   - `RETRY_DISPATCH_BATCH_SIZE`
   - `RETRY_REENQUEUE_DELAY`
-- targeted worker tests for dispatcher behavior
+- configurable worker concurrency via `WORKER_CONCURRENCY`:
+  - default `4`
+  - fail-fast config validation for non-positive and non-integer values
+- bounded in-process worker pool runtime
+- graceful shutdown drain bounded by `WORKER_SHUTDOWN_TIMEOUT`
+- duplicate-delivery and concurrent repository transition safety tests
+- worker logs with `job_id`, `worker_slot`, and transition outcome fields
 
-Pending:
+Next:
 
-- manual phase UAT evidence capture (local end-to-end run artifacts)
+- Phase 04: visibility timeout and recovery for jobs stuck in `processing` after crashes/timeouts.
 
 ## Project Structure
 
@@ -168,12 +193,23 @@ Worker tests include dispatcher coverage:
 - enqueue-failure reschedule
 - claim error path
 - immediate dispatch on startup
+- bounded worker-pool concurrency
+- duplicate-delivery contention
+- graceful shutdown drain and timeout behavior
+- transition logging fields for claim win/skip paths
+
+Repository tests include contention coverage:
+
+- concurrent `MarkProcessing` single-winner behavior
+- concurrent terminal transition attempts applying at most once
+- concurrent `ClaimDueRetries` callers avoiding duplicate claimed job IDs
 
 ## Notes
 
 - API and worker are separately runnable.
-- Retry timing is configurable via:
+- Worker runtime behavior is configurable via:
   - `WORKER_CONCURRENCY`
+  - `WORKER_SHUTDOWN_TIMEOUT`
   - `RETRY_DELAY`
   - `RETRY_DISPATCH_INTERVAL`
   - `RETRY_DISPATCH_BATCH_SIZE`
