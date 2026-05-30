@@ -16,20 +16,27 @@ const defaultProcessingFailureRetryDelay = 30 * time.Second
 const defaultRetryDispatchInterval = 1 * time.Minute
 const defaultRetryDispatchBatchSize = 10
 const defaultRetryReenqueueDelay = 1 * time.Minute
+const defaultProcessingVisibilityTimeout = 5 * time.Minute
+const defaultProcessingRecoveryInterval = 1 * time.Minute
+const defaultProcessingRecoveryBatchSize = 10
 const defaultWorkerConcurrency = 1
 const defaultShutdownTimeout = 10 * time.Second
 
 type Worker struct {
-	repo                        jobs.Repository
-	queue                       queue.Queue
-	processor                   Processor
-	logger                      *slog.Logger
-	processingFailureRetryDelay time.Duration
-	retryDispatchInterval       time.Duration
-	retryDispatchBatchSize      int
-	retryReenqueueDelay         time.Duration
-	concurrency                 int
-	shutdownTimeout             time.Duration
+	repo                         jobs.Repository
+	queue                        queue.Queue
+	processor                    Processor
+	logger                       *slog.Logger
+	processingFailureRetryDelay  time.Duration
+	retryDispatchInterval        time.Duration
+	retryDispatchBatchSize       int
+	retryReenqueueDelay          time.Duration
+	processingVisibilityTimeout  time.Duration
+	processingRecoveryInterval   time.Duration
+	processingRecoveryBatchSize  int
+	processingRecoveryRetryDelay time.Duration
+	concurrency                  int
+	shutdownTimeout              time.Duration
 }
 
 type RetryRuntimeConfig struct {
@@ -37,6 +44,13 @@ type RetryRuntimeConfig struct {
 	DispatchInterval  time.Duration
 	DispatchBatchSize int
 	ReenqueueDelay    time.Duration
+}
+
+type ProcessingRecoveryRuntimeConfig struct {
+	VisibilityTimeout time.Duration
+	Interval          time.Duration
+	BatchSize         int
+	RetryDelay        time.Duration
 }
 
 func NewWorker(repo jobs.Repository, queue queue.Queue, processor Processor, logger *slog.Logger) *Worker {
@@ -53,16 +67,20 @@ func NewWorker(repo jobs.Repository, queue queue.Queue, processor Processor, log
 		logger = slog.Default()
 	}
 	return &Worker{
-		repo:                        repo,
-		queue:                       queue,
-		processor:                   processor,
-		logger:                      logger,
-		processingFailureRetryDelay: defaultProcessingFailureRetryDelay,
-		retryDispatchInterval:       defaultRetryDispatchInterval,
-		retryDispatchBatchSize:      defaultRetryDispatchBatchSize,
-		retryReenqueueDelay:         defaultRetryReenqueueDelay,
-		concurrency:                 defaultWorkerConcurrency,
-		shutdownTimeout:             defaultShutdownTimeout,
+		repo:                         repo,
+		queue:                        queue,
+		processor:                    processor,
+		logger:                       logger,
+		processingFailureRetryDelay:  defaultProcessingFailureRetryDelay,
+		retryDispatchInterval:        defaultRetryDispatchInterval,
+		retryDispatchBatchSize:       defaultRetryDispatchBatchSize,
+		retryReenqueueDelay:          defaultRetryReenqueueDelay,
+		processingVisibilityTimeout:  defaultProcessingVisibilityTimeout,
+		processingRecoveryInterval:   defaultProcessingRecoveryInterval,
+		processingRecoveryBatchSize:  defaultProcessingRecoveryBatchSize,
+		processingRecoveryRetryDelay: defaultProcessingFailureRetryDelay,
+		concurrency:                  defaultWorkerConcurrency,
+		shutdownTimeout:              defaultShutdownTimeout,
 	}
 }
 
@@ -87,6 +105,27 @@ func (w *Worker) SetRetryRuntimeConfig(cfg RetryRuntimeConfig) error {
 	return nil
 }
 
+func (w *Worker) SetProcessingRecoveryRuntimeConfig(cfg ProcessingRecoveryRuntimeConfig) error {
+	if cfg.VisibilityTimeout <= 0 {
+		return errors.New("processing visibility timeout must be greater than zero")
+	}
+	if cfg.Interval <= 0 {
+		return errors.New("processing recovery interval must be greater than zero")
+	}
+	if cfg.BatchSize <= 0 {
+		return errors.New("processing recovery batch size must be greater than zero")
+	}
+	if cfg.RetryDelay <= 0 {
+		return errors.New("processing recovery retry delay must be greater than zero")
+	}
+
+	w.processingVisibilityTimeout = cfg.VisibilityTimeout
+	w.processingRecoveryInterval = cfg.Interval
+	w.processingRecoveryBatchSize = cfg.BatchSize
+	w.processingRecoveryRetryDelay = cfg.RetryDelay
+	return nil
+}
+
 func (w *Worker) SetConcurrency(concurrency int) error {
 	if concurrency <= 0 {
 		return errors.New("worker concurrency must be greater than zero")
@@ -105,6 +144,7 @@ func (w *Worker) SetShutdownTimeout(timeout time.Duration) error {
 
 func (w *Worker) Run(ctx context.Context) {
 	go w.runRetryDispatcher(ctx)
+	go w.runProcessingRecoveryScanner(ctx)
 
 	msgs := make(chan queue.Message)
 	var wg sync.WaitGroup
@@ -149,6 +189,89 @@ func (w *Worker) Run(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func (w *Worker) runProcessingRecoveryScanner(ctx context.Context) {
+	select {
+	case <-ctx.Done():
+		return
+	default:
+	}
+
+	if err := w.recoverStaleProcessing(ctx, time.Now()); err != nil {
+		w.logger.Error("failed to recover stale processing jobs", "error", err)
+	}
+
+	ticker := time.NewTicker(w.processingRecoveryInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := w.recoverStaleProcessing(ctx, time.Now()); err != nil {
+				w.logger.Error("failed to recover stale processing jobs", "error", err)
+			}
+		}
+	}
+}
+
+func (w *Worker) recoverStaleProcessing(ctx context.Context, now time.Time) error {
+	results, err := w.repo.RecoverStaleProcessing(
+		ctx,
+		now,
+		w.processingVisibilityTimeout,
+		w.processingRecoveryRetryDelay,
+		w.processingRecoveryBatchSize,
+	)
+	if err != nil {
+		return err
+	}
+
+	for _, result := range results {
+		switch result.Decision {
+		case jobs.RecoveryDecisionRetry:
+			w.logger.Info(
+				"stale processing job recovered for retry",
+				"job_id", result.ID,
+				"transition", "processing_to_pending",
+				"transition_applied", true,
+				"transition_outcome", "recovered_for_retry",
+				"decision", result.Decision,
+				"attempt", result.Attempt,
+				"max_attempts", result.MaxAttempts,
+				"visibility_timeout", w.processingVisibilityTimeout,
+				"next_run_at", result.NextRunAt,
+			)
+		case jobs.RecoveryDecisionTerminal:
+			w.logger.Info(
+				"stale processing job recovered as terminal failed",
+				"job_id", result.ID,
+				"transition", "processing_to_failed",
+				"transition_applied", true,
+				"transition_outcome", "terminal_failed",
+				"decision", result.Decision,
+				"attempt", result.Attempt,
+				"max_attempts", result.MaxAttempts,
+				"visibility_timeout", w.processingVisibilityTimeout,
+			)
+		default:
+			w.logger.Warn(
+				"stale processing recovery returned unknown decision",
+				"job_id", result.ID,
+				"transition", "processing_recovery",
+				"transition_applied", true,
+				"transition_outcome", "unknown",
+				"decision", result.Decision,
+				"attempt", result.Attempt,
+				"max_attempts", result.MaxAttempts,
+				"visibility_timeout", w.processingVisibilityTimeout,
+			)
+		}
+	}
+
+	return nil
 }
 
 func (w *Worker) waitForInFlightJobs(wg *sync.WaitGroup, cancelDrain context.CancelFunc) {

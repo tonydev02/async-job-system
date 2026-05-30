@@ -96,6 +96,14 @@ func run(ctx context.Context, cfg config.WorkerConfig) error {
 	}); err != nil {
 		return fmt.Errorf("configure worker retry runtime: %w", err)
 	}
+	if err := w.SetProcessingRecoveryRuntimeConfig(worker.ProcessingRecoveryRuntimeConfig{
+		VisibilityTimeout: cfg.ProcessingVisibilityTimeout,
+		Interval:          cfg.ProcessingRecoveryInterval,
+		BatchSize:         cfg.ProcessingRecoveryBatchSize,
+		RetryDelay:        cfg.ProcessingRecoveryRetryDelay,
+	}); err != nil {
+		return fmt.Errorf("configure worker processing recovery runtime: %w", err)
+	}
 
 	w.Run(ctx)
 	return nil
