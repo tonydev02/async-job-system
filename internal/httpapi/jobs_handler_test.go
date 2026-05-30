@@ -76,6 +76,10 @@ func (f *fakeRepo) RescheduleRetry(ctx context.Context, id uuid.UUID, delay time
 	return true, nil
 }
 
+func (f *fakeRepo) RecoverStaleProcessing(context.Context, time.Time, time.Duration, time.Duration, int) ([]jobs.RecoveryTransitionResult, error) {
+	return nil, nil
+}
+
 func (f *fakeQueue) Enqueue(ctx context.Context, msg queue.Message) error {
 	if f.enqueueFn != nil {
 		return f.enqueueFn(ctx, msg)

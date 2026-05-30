@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/namta/async-job-system/internal/jobs"
@@ -388,6 +389,251 @@ func TestRepositoryHandleProcessingFailure_MarksTerminalAtMaxAttempts(t *testing
 	}
 }
 
+func TestRepositoryRecoverStaleProcessing_SchedulesRetryBeforeMaxAttempts(t *testing.T) {
+	db := setupDBWithJobsTable(t)
+	repo := postgres.NewRepository(db)
+	now := time.Date(2026, 5, 30, 9, 0, 0, 0, time.UTC)
+
+	created, err := repo.Create(context.Background(), jobs.CreateParams{
+		Payload:     json.RawMessage(`{"task":"stale-retry"}`),
+		MaxAttempts: 3,
+	})
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+	ok, err := repo.MarkProcessing(context.Background(), created.ID)
+	if err != nil || !ok {
+		t.Fatalf("mark processing: ok=%v err=%v", ok, err)
+	}
+	setStartedAt(t, db, created.ID, now.Add(-10*time.Minute))
+
+	results, err := repo.RecoverStaleProcessing(context.Background(), now, 5*time.Minute, 2*time.Second, 10)
+	if err != nil {
+		t.Fatalf("recover stale processing: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected one recovered job, got %d", len(results))
+	}
+	if results[0].ID != created.ID {
+		t.Fatalf("unexpected recovered ID: got %s want %s", results[0].ID, created.ID)
+	}
+	if results[0].Decision != jobs.RecoveryDecisionRetry {
+		t.Fatalf("expected retry decision, got %s", results[0].Decision)
+	}
+	if results[0].Attempt != 1 {
+		t.Fatalf("expected attempt 1, got %d", results[0].Attempt)
+	}
+	if results[0].NextRunAt == nil {
+		t.Fatal("expected next_run_at in recovery result")
+	}
+
+	fetched, err := repo.GetByID(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("get job by id: %v", err)
+	}
+	if fetched.Status != jobs.StatusPending {
+		t.Fatalf("expected pending after recovery, got %s", fetched.Status)
+	}
+	if fetched.Attempt != 1 {
+		t.Fatalf("expected recovery not to increment attempt, got %d", fetched.Attempt)
+	}
+	if fetched.Error == nil || *fetched.Error != "processing visibility timeout expired" {
+		t.Fatalf("expected recovery error text, got %v", fetched.Error)
+	}
+	if fetched.NextRunAt == nil {
+		t.Fatal("expected next_run_at to be set")
+	}
+	if fetched.CompletedAt != nil {
+		t.Fatal("expected completed_at nil for retry recovery")
+	}
+}
+
+func TestRepositoryRecoverStaleProcessing_MarksTerminalAtMaxAttempts(t *testing.T) {
+	db := setupDBWithJobsTable(t)
+	repo := postgres.NewRepository(db)
+	now := time.Date(2026, 5, 30, 9, 0, 0, 0, time.UTC)
+
+	created, err := repo.Create(context.Background(), jobs.CreateParams{
+		Payload:     json.RawMessage(`{"task":"stale-terminal"}`),
+		MaxAttempts: 1,
+	})
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+	ok, err := repo.MarkProcessing(context.Background(), created.ID)
+	if err != nil || !ok {
+		t.Fatalf("mark processing: ok=%v err=%v", ok, err)
+	}
+	setStartedAt(t, db, created.ID, now.Add(-10*time.Minute))
+
+	results, err := repo.RecoverStaleProcessing(context.Background(), now, 5*time.Minute, 2*time.Second, 10)
+	if err != nil {
+		t.Fatalf("recover stale processing: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected one recovered job, got %d", len(results))
+	}
+	if results[0].Decision != jobs.RecoveryDecisionTerminal {
+		t.Fatalf("expected terminal decision, got %s", results[0].Decision)
+	}
+	if results[0].NextRunAt != nil {
+		t.Fatalf("expected terminal recovery next_run_at nil, got %v", *results[0].NextRunAt)
+	}
+
+	fetched, err := repo.GetByID(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("get job by id: %v", err)
+	}
+	if fetched.Status != jobs.StatusFailed {
+		t.Fatalf("expected failed after recovery, got %s", fetched.Status)
+	}
+	if fetched.CompletedAt == nil {
+		t.Fatal("expected completed_at for terminal recovery")
+	}
+	if fetched.NextRunAt != nil {
+		t.Fatalf("expected next_run_at nil for terminal recovery, got %v", *fetched.NextRunAt)
+	}
+}
+
+func TestRepositoryRecoverStaleProcessing_SkipsFreshAndNonProcessingJobs(t *testing.T) {
+	db := setupDBWithJobsTable(t)
+	repo := postgres.NewRepository(db)
+	now := time.Date(2026, 5, 30, 9, 0, 0, 0, time.UTC)
+
+	fresh, err := repo.Create(context.Background(), jobs.CreateParams{Payload: json.RawMessage(`{"task":"fresh"}`)})
+	if err != nil {
+		t.Fatalf("create fresh job: %v", err)
+	}
+	ok, err := repo.MarkProcessing(context.Background(), fresh.ID)
+	if err != nil || !ok {
+		t.Fatalf("mark fresh processing: ok=%v err=%v", ok, err)
+	}
+	setStartedAt(t, db, fresh.ID, now.Add(-1*time.Minute))
+
+	pending, err := repo.Create(context.Background(), jobs.CreateParams{Payload: json.RawMessage(`{"task":"pending"}`)})
+	if err != nil {
+		t.Fatalf("create pending job: %v", err)
+	}
+
+	completed, err := repo.Create(context.Background(), jobs.CreateParams{Payload: json.RawMessage(`{"task":"completed"}`)})
+	if err != nil {
+		t.Fatalf("create completed job: %v", err)
+	}
+	ok, err = repo.MarkProcessing(context.Background(), completed.ID)
+	if err != nil || !ok {
+		t.Fatalf("mark completed processing: ok=%v err=%v", ok, err)
+	}
+	ok, err = repo.MarkCompleted(context.Background(), completed.ID, json.RawMessage(`{"ok":true}`))
+	if err != nil || !ok {
+		t.Fatalf("mark completed: ok=%v err=%v", ok, err)
+	}
+	setStartedAt(t, db, completed.ID, now.Add(-10*time.Minute))
+
+	failed, err := repo.Create(context.Background(), jobs.CreateParams{Payload: json.RawMessage(`{"task":"failed"}`)})
+	if err != nil {
+		t.Fatalf("create failed job: %v", err)
+	}
+	ok, err = repo.MarkProcessing(context.Background(), failed.ID)
+	if err != nil || !ok {
+		t.Fatalf("mark failed processing: ok=%v err=%v", ok, err)
+	}
+	ok, err = repo.MarkFailed(context.Background(), failed.ID, "failed already")
+	if err != nil || !ok {
+		t.Fatalf("mark failed: ok=%v err=%v", ok, err)
+	}
+	setStartedAt(t, db, failed.ID, now.Add(-10*time.Minute))
+
+	results, err := repo.RecoverStaleProcessing(context.Background(), now, 5*time.Minute, 2*time.Second, 10)
+	if err != nil {
+		t.Fatalf("recover stale processing: %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("expected no recoveries, got %#v", results)
+	}
+
+	for _, tc := range []struct {
+		id     uuid.UUID
+		status jobs.Status
+	}{
+		{id: fresh.ID, status: jobs.StatusProcessing},
+		{id: pending.ID, status: jobs.StatusPending},
+		{id: completed.ID, status: jobs.StatusCompleted},
+		{id: failed.ID, status: jobs.StatusFailed},
+	} {
+		fetched, err := repo.GetByID(context.Background(), tc.id)
+		if err != nil {
+			t.Fatalf("get job by id: %v", err)
+		}
+		if fetched.Status != tc.status {
+			t.Fatalf("expected status %s for %s, got %s", tc.status, tc.id, fetched.Status)
+		}
+	}
+}
+
+func TestRepositoryConcurrentRecoverStaleProcessingDoesNotDuplicateIDs(t *testing.T) {
+	db := setupDBWithJobsTable(t)
+	repo := postgres.NewRepository(db)
+	now := time.Date(2026, 5, 30, 9, 0, 0, 0, time.UTC)
+
+	const staleJobs = 12
+	for i := 0; i < staleJobs; i++ {
+		created, err := repo.Create(context.Background(), jobs.CreateParams{Payload: json.RawMessage(`{"task":"concurrent-stale"}`)})
+		if err != nil {
+			t.Fatalf("create stale job %d: %v", i, err)
+		}
+		ok, err := repo.MarkProcessing(context.Background(), created.ID)
+		if err != nil || !ok {
+			t.Fatalf("mark processing %d: ok=%v err=%v", i, ok, err)
+		}
+		setStartedAt(t, db, created.ID, now.Add(-10*time.Minute))
+	}
+
+	const callers = 6
+	type recoveryResult struct {
+		ids []string
+		err error
+	}
+
+	start := make(chan struct{})
+	results := make([]recoveryResult, callers)
+	var wg sync.WaitGroup
+	wg.Add(callers)
+	for i := 0; i < callers; i++ {
+		go func(i int) {
+			defer wg.Done()
+			<-start
+
+			recovered, err := repo.RecoverStaleProcessing(context.Background(), now, 5*time.Minute, 2*time.Second, 3)
+			results[i].err = err
+			for _, result := range recovered {
+				results[i].ids = append(results[i].ids, result.ID.String())
+			}
+		}(i)
+	}
+
+	close(start)
+	wg.Wait()
+
+	seen := make(map[string]struct{})
+	totalRecovered := 0
+	for i, result := range results {
+		if result.err != nil {
+			t.Fatalf("recover stale processing caller %d: %v", i, result.err)
+		}
+		for _, id := range result.ids {
+			totalRecovered++
+			if _, ok := seen[id]; ok {
+				t.Fatalf("duplicate recovered job id across callers: %s", id)
+			}
+			seen[id] = struct{}{}
+		}
+	}
+
+	if totalRecovered != staleJobs {
+		t.Fatalf("expected all stale jobs to be recovered once, got %d of %d", totalRecovered, staleJobs)
+	}
+}
+
 func TestRepositoryRetrySchedulingPreservesSubSecondDelay(t *testing.T) {
 	db := setupDBWithJobsTable(t)
 	repo := postgres.NewRepository(db)
@@ -603,6 +849,22 @@ func countApplied(results []concurrentBoolResult) int {
 		}
 	}
 	return count
+}
+
+func setStartedAt(t *testing.T, db *sql.DB, id uuid.UUID, startedAt time.Time) {
+	t.Helper()
+
+	res, err := db.Exec(`UPDATE jobs SET started_at = $2, updated_at = $2 WHERE id = $1`, id, startedAt)
+	if err != nil {
+		t.Fatalf("set started_at: %v", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		t.Fatalf("set started_at rows affected: %v", err)
+	}
+	if affected != 1 {
+		t.Fatalf("expected one row updated for started_at, got %d", affected)
+	}
 }
 
 func openTestDB(t *testing.T) *sql.DB {

@@ -30,6 +30,7 @@ type fakeRepo struct {
 	handleProcessingFailureFn func(ctx context.Context, id uuid.UUID, errMsg string, retryDelay time.Duration) (jobs.FailureTransitionResult, error)
 	claimDueRetriesFn         func(ctx context.Context, now time.Time, limit int) ([]uuid.UUID, error)
 	rescheduleRetryFn         func(ctx context.Context, id uuid.UUID, delay time.Duration) (bool, error)
+	recoverStaleProcessingFn  func(ctx context.Context, now time.Time, visibilityTimeout time.Duration, retryDelay time.Duration, limit int) ([]jobs.RecoveryTransitionResult, error)
 
 	createCalls                  int
 	getByIDCalls                 int
@@ -39,20 +40,25 @@ type fakeRepo struct {
 	handleProcessingFailureCalls int
 	claimDueRetriesCalls         int
 	rescheduleRetryCalls         int
+	recoverStaleProcessingCalls  int
 
-	lastGetByIDID            uuid.UUID
-	lastMarkProcessingID     uuid.UUID
-	lastMarkCompletedID      uuid.UUID
-	lastMarkCompletedRes     json.RawMessage
-	lastMarkFailedID         uuid.UUID
-	lastMarkFailedErr        string
-	lastHandleFailureID      uuid.UUID
-	lastHandleFailureErr     string
-	lastHandleFailureDelay   time.Duration
-	lastClaimDueRetriesNow   time.Time
-	lastClaimDueRetriesLimit int
-	lastRescheduleRetryID    uuid.UUID
-	lastRescheduleRetryDelay time.Duration
+	lastGetByIDID                uuid.UUID
+	lastMarkProcessingID         uuid.UUID
+	lastMarkCompletedID          uuid.UUID
+	lastMarkCompletedRes         json.RawMessage
+	lastMarkFailedID             uuid.UUID
+	lastMarkFailedErr            string
+	lastHandleFailureID          uuid.UUID
+	lastHandleFailureErr         string
+	lastHandleFailureDelay       time.Duration
+	lastClaimDueRetriesNow       time.Time
+	lastClaimDueRetriesLimit     int
+	lastRescheduleRetryID        uuid.UUID
+	lastRescheduleRetryDelay     time.Duration
+	lastRecoverNow               time.Time
+	lastRecoverVisibilityTimeout time.Duration
+	lastRecoverRetryDelay        time.Duration
+	lastRecoverLimit             int
 }
 
 func (f *fakeRepo) Create(ctx context.Context, params jobs.CreateParams) (jobs.Job, error) {
@@ -154,6 +160,21 @@ func (f *fakeRepo) RescheduleRetry(ctx context.Context, id uuid.UUID, delay time
 		return fn(ctx, id, delay)
 	}
 	return false, nil
+}
+
+func (f *fakeRepo) RecoverStaleProcessing(ctx context.Context, now time.Time, visibilityTimeout time.Duration, retryDelay time.Duration, limit int) ([]jobs.RecoveryTransitionResult, error) {
+	f.mu.Lock()
+	f.recoverStaleProcessingCalls++
+	f.lastRecoverNow = now
+	f.lastRecoverVisibilityTimeout = visibilityTimeout
+	f.lastRecoverRetryDelay = retryDelay
+	f.lastRecoverLimit = limit
+	fn := f.recoverStaleProcessingFn
+	f.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, now, visibilityTimeout, retryDelay, limit)
+	}
+	return nil, nil
 }
 
 type fakeQueue struct {
@@ -839,6 +860,41 @@ func TestRun_StartsRetryDispatcher(t *testing.T) {
 	}
 }
 
+func TestRun_StartsProcessingRecoveryScanner(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	repo := &fakeRepo{
+		recoverStaleProcessingFn: func(ctx context.Context, now time.Time, visibilityTimeout time.Duration, retryDelay time.Duration, limit int) ([]jobs.RecoveryTransitionResult, error) {
+			cancel()
+			return nil, nil
+		},
+	}
+	q := &fakeQueue{
+		dequeueFn: func(ctx context.Context) (queue.Message, error) {
+			<-ctx.Done()
+			return queue.Message{}, ctx.Err()
+		},
+	}
+	worker := newTestWorker(repo, q, &fakeProcessor{})
+
+	done := make(chan struct{})
+	go func() {
+		worker.Run(ctx)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("worker.Run did not stop after recovery scanner canceled context")
+	}
+
+	if repo.recoverStaleProcessingCalls == 0 {
+		t.Fatal("expected processing recovery scanner to run when worker starts")
+	}
+}
+
 func TestRun_CancelStopsAcceptingNewWork(t *testing.T) {
 	jobID := uuid.New()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1339,6 +1395,131 @@ func TestRunRetryDispatcher_DispatchesImmediatelyOnStart(t *testing.T) {
 	}
 }
 
+func TestRecoverStaleProcessing_LogsRecoveryDecisions(t *testing.T) {
+	retryID := uuid.New()
+	terminalID := uuid.New()
+	nextRunAt := time.Date(2026, 5, 30, 10, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 5, 30, 9, 55, 0, 0, time.UTC)
+
+	repo := &fakeRepo{
+		recoverStaleProcessingFn: func(ctx context.Context, recoverNow time.Time, visibilityTimeout time.Duration, retryDelay time.Duration, limit int) ([]jobs.RecoveryTransitionResult, error) {
+			if !recoverNow.Equal(now) {
+				t.Fatalf("unexpected recovery time: got %v want %v", recoverNow, now)
+			}
+			if visibilityTimeout != defaultProcessingVisibilityTimeout {
+				t.Fatalf("unexpected visibility timeout: got %s want %s", visibilityTimeout, defaultProcessingVisibilityTimeout)
+			}
+			if retryDelay != defaultProcessingFailureRetryDelay {
+				t.Fatalf("unexpected retry delay: got %s want %s", retryDelay, defaultProcessingFailureRetryDelay)
+			}
+			if limit != defaultProcessingRecoveryBatchSize {
+				t.Fatalf("unexpected recovery limit: got %d want %d", limit, defaultProcessingRecoveryBatchSize)
+			}
+			return []jobs.RecoveryTransitionResult{
+				{
+					ID:          retryID,
+					Decision:    jobs.RecoveryDecisionRetry,
+					Attempt:     1,
+					MaxAttempts: 3,
+					NextRunAt:   &nextRunAt,
+				},
+				{
+					ID:          terminalID,
+					Decision:    jobs.RecoveryDecisionTerminal,
+					Attempt:     3,
+					MaxAttempts: 3,
+				},
+			}, nil
+		},
+	}
+
+	var logs bytes.Buffer
+	worker := NewWorker(repo, &fakeQueue{}, &fakeProcessor{}, slog.New(slog.NewTextHandler(&logs, nil)))
+
+	if err := worker.recoverStaleProcessing(context.Background(), now); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := logs.String()
+	for _, want := range []string{
+		"job_id=" + retryID.String(),
+		"transition=processing_to_pending",
+		"transition_outcome=recovered_for_retry",
+		"job_id=" + terminalID.String(),
+		"transition=processing_to_failed",
+		"transition_outcome=terminal_failed",
+		"visibility_timeout=5m0s",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected recovery log to contain %q, got %q", want, got)
+		}
+	}
+}
+
+func TestRunProcessingRecoveryScanner_DispatchesImmediatelyAndOnInterval(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var calls atomic.Int32
+	repo := &fakeRepo{
+		recoverStaleProcessingFn: func(ctx context.Context, now time.Time, visibilityTimeout time.Duration, retryDelay time.Duration, limit int) ([]jobs.RecoveryTransitionResult, error) {
+			if calls.Add(1) >= 2 {
+				cancel()
+			}
+			return nil, nil
+		},
+	}
+	worker := newTestWorker(repo, &fakeQueue{}, &fakeProcessor{})
+	worker.processingRecoveryInterval = 10 * time.Millisecond
+
+	done := make(chan struct{})
+	go func() {
+		worker.runProcessingRecoveryScanner(ctx)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("recovery scanner did not stop after context cancellation")
+	}
+
+	if got := calls.Load(); got < 2 {
+		t.Fatalf("expected at least two recovery scans, got %d", got)
+	}
+}
+
+func TestRunProcessingRecoveryScanner_LogsErrorsAndStopsOnCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	recoveryErr := errors.New("recover failed")
+
+	repo := &fakeRepo{
+		recoverStaleProcessingFn: func(ctx context.Context, now time.Time, visibilityTimeout time.Duration, retryDelay time.Duration, limit int) ([]jobs.RecoveryTransitionResult, error) {
+			cancel()
+			return nil, recoveryErr
+		},
+	}
+	var logs bytes.Buffer
+	worker := NewWorker(repo, &fakeQueue{}, &fakeProcessor{}, slog.New(slog.NewTextHandler(&logs, nil)))
+	worker.processingRecoveryInterval = time.Hour
+
+	done := make(chan struct{})
+	go func() {
+		worker.runProcessingRecoveryScanner(ctx)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("recovery scanner did not stop after cancellation")
+	}
+
+	if got := logs.String(); !strings.Contains(got, "failed to recover stale processing jobs") || !strings.Contains(got, recoveryErr.Error()) {
+		t.Fatalf("expected recovery error log, got %q", got)
+	}
+}
+
 func TestDeterministicProcessor_ContextCanceled(t *testing.T) {
 	p := &DeterministicProcessor{}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1446,6 +1627,86 @@ func TestSetRetryRuntimeConfig_InvalidValues(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			worker := newTestWorker(repo, q, processor)
 			if err := worker.SetRetryRuntimeConfig(tc.cfg); err == nil {
+				t.Fatal("expected error, got nil")
+			}
+		})
+	}
+}
+
+func TestSetProcessingRecoveryRuntimeConfig_AppliesValues(t *testing.T) {
+	worker := newTestWorker(&fakeRepo{}, &fakeQueue{}, &fakeProcessor{})
+	cfg := ProcessingRecoveryRuntimeConfig{
+		VisibilityTimeout: 2 * time.Minute,
+		Interval:          15 * time.Second,
+		BatchSize:         7,
+		RetryDelay:        3 * time.Second,
+	}
+
+	if err := worker.SetProcessingRecoveryRuntimeConfig(cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if worker.processingVisibilityTimeout != cfg.VisibilityTimeout {
+		t.Fatalf("unexpected visibility timeout: got %s want %s", worker.processingVisibilityTimeout, cfg.VisibilityTimeout)
+	}
+	if worker.processingRecoveryInterval != cfg.Interval {
+		t.Fatalf("unexpected recovery interval: got %s want %s", worker.processingRecoveryInterval, cfg.Interval)
+	}
+	if worker.processingRecoveryBatchSize != cfg.BatchSize {
+		t.Fatalf("unexpected recovery batch size: got %d want %d", worker.processingRecoveryBatchSize, cfg.BatchSize)
+	}
+	if worker.processingRecoveryRetryDelay != cfg.RetryDelay {
+		t.Fatalf("unexpected recovery retry delay: got %s want %s", worker.processingRecoveryRetryDelay, cfg.RetryDelay)
+	}
+}
+
+func TestSetProcessingRecoveryRuntimeConfig_InvalidValues(t *testing.T) {
+	testCases := []struct {
+		name string
+		cfg  ProcessingRecoveryRuntimeConfig
+	}{
+		{
+			name: "visibility timeout <= 0",
+			cfg: ProcessingRecoveryRuntimeConfig{
+				VisibilityTimeout: 0,
+				Interval:          time.Second,
+				BatchSize:         1,
+				RetryDelay:        time.Second,
+			},
+		},
+		{
+			name: "interval <= 0",
+			cfg: ProcessingRecoveryRuntimeConfig{
+				VisibilityTimeout: time.Second,
+				Interval:          0,
+				BatchSize:         1,
+				RetryDelay:        time.Second,
+			},
+		},
+		{
+			name: "batch size <= 0",
+			cfg: ProcessingRecoveryRuntimeConfig{
+				VisibilityTimeout: time.Second,
+				Interval:          time.Second,
+				BatchSize:         0,
+				RetryDelay:        time.Second,
+			},
+		},
+		{
+			name: "retry delay <= 0",
+			cfg: ProcessingRecoveryRuntimeConfig{
+				VisibilityTimeout: time.Second,
+				Interval:          time.Second,
+				BatchSize:         1,
+				RetryDelay:        0,
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			worker := newTestWorker(&fakeRepo{}, &fakeQueue{}, &fakeProcessor{})
+			if err := worker.SetProcessingRecoveryRuntimeConfig(tc.cfg); err == nil {
 				t.Fatal("expected error, got nil")
 			}
 		})
