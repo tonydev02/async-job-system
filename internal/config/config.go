@@ -8,20 +8,24 @@ import (
 )
 
 type WorkerConfig struct {
-	DatabaseURL            string
-	RedisAddr              string
-	RedisPassword          string
-	RedisDB                int
-	RedisQueueKey          string
-	RedisBlockTimeout      time.Duration
-	WorkerConcurrency      int
-	RetryDelay             time.Duration
-	RetryDispatchInterval  time.Duration
-	RetryDispatchBatchSize int
-	RetryReenqueueDelay    time.Duration
-	ShutdownTimeout        time.Duration
-	ProcessorFailJobID     string
-	LogLevel               string
+	DatabaseURL                  string
+	RedisAddr                    string
+	RedisPassword                string
+	RedisDB                      int
+	RedisQueueKey                string
+	RedisBlockTimeout            time.Duration
+	WorkerConcurrency            int
+	RetryDelay                   time.Duration
+	RetryDispatchInterval        time.Duration
+	RetryDispatchBatchSize       int
+	RetryReenqueueDelay          time.Duration
+	ProcessingVisibilityTimeout  time.Duration
+	ProcessingRecoveryInterval   time.Duration
+	ProcessingRecoveryBatchSize  int
+	ProcessingRecoveryRetryDelay time.Duration
+	ShutdownTimeout              time.Duration
+	ProcessorFailJobID           string
+	LogLevel                     string
 }
 
 func LoadWorkerConfig() (WorkerConfig, error) {
@@ -80,26 +84,62 @@ func LoadWorkerConfig() (WorkerConfig, error) {
 		return WorkerConfig{}, fmt.Errorf("RETRY_REENQUEUE_DELAY must be greater than zero")
 	}
 
+	processingVisibilityTimeout, err := getEnvDuration("PROCESSING_VISIBILITY_TIMEOUT", 5*time.Minute)
+	if err != nil {
+		return WorkerConfig{}, fmt.Errorf("PROCESSING_VISIBILITY_TIMEOUT: %w", err)
+	}
+	if processingVisibilityTimeout <= 0 {
+		return WorkerConfig{}, fmt.Errorf("PROCESSING_VISIBILITY_TIMEOUT must be greater than zero")
+	}
+
+	processingRecoveryInterval, err := getEnvDuration("PROCESSING_RECOVERY_INTERVAL", 1*time.Minute)
+	if err != nil {
+		return WorkerConfig{}, fmt.Errorf("PROCESSING_RECOVERY_INTERVAL: %w", err)
+	}
+	if processingRecoveryInterval <= 0 {
+		return WorkerConfig{}, fmt.Errorf("PROCESSING_RECOVERY_INTERVAL must be greater than zero")
+	}
+
+	processingRecoveryBatchSize, err := getEnvInt("PROCESSING_RECOVERY_BATCH_SIZE", 10)
+	if err != nil {
+		return WorkerConfig{}, fmt.Errorf("PROCESSING_RECOVERY_BATCH_SIZE: %w", err)
+	}
+	if processingRecoveryBatchSize <= 0 {
+		return WorkerConfig{}, fmt.Errorf("PROCESSING_RECOVERY_BATCH_SIZE must be greater than zero")
+	}
+
+	processingRecoveryRetryDelay, err := getEnvDuration("PROCESSING_RECOVERY_RETRY_DELAY", retryDelay)
+	if err != nil {
+		return WorkerConfig{}, fmt.Errorf("PROCESSING_RECOVERY_RETRY_DELAY: %w", err)
+	}
+	if processingRecoveryRetryDelay <= 0 {
+		return WorkerConfig{}, fmt.Errorf("PROCESSING_RECOVERY_RETRY_DELAY must be greater than zero")
+	}
+
 	shutdownTimeout, err := getEnvDuration("WORKER_SHUTDOWN_TIMEOUT", 10*time.Second)
 	if err != nil {
 		return WorkerConfig{}, fmt.Errorf("WORKER_SHUTDOWN_TIMEOUT: %w", err)
 	}
 
 	return WorkerConfig{
-		DatabaseURL:            dbURL,
-		RedisAddr:              getEnv("REDIS_ADDR", "localhost:6379"),
-		RedisPassword:          getEnv("REDIS_PASSWORD", ""),
-		RedisDB:                redisDB,
-		RedisQueueKey:          getEnv("REDIS_QUEUE_KEY", "jobs:queue"),
-		RedisBlockTimeout:      blockTimeout,
-		WorkerConcurrency:      workerConcurrency,
-		RetryDelay:             retryDelay,
-		RetryDispatchInterval:  retryDispatchInterval,
-		RetryDispatchBatchSize: retryDispatchBatchSize,
-		RetryReenqueueDelay:    retryReenqueueDelay,
-		ShutdownTimeout:        shutdownTimeout,
-		ProcessorFailJobID:     getEnv("PROCESSOR_FAIL_JOB_ID", ""),
-		LogLevel:               getEnv("LOG_LEVEL", "info"),
+		DatabaseURL:                  dbURL,
+		RedisAddr:                    getEnv("REDIS_ADDR", "localhost:6379"),
+		RedisPassword:                getEnv("REDIS_PASSWORD", ""),
+		RedisDB:                      redisDB,
+		RedisQueueKey:                getEnv("REDIS_QUEUE_KEY", "jobs:queue"),
+		RedisBlockTimeout:            blockTimeout,
+		WorkerConcurrency:            workerConcurrency,
+		RetryDelay:                   retryDelay,
+		RetryDispatchInterval:        retryDispatchInterval,
+		RetryDispatchBatchSize:       retryDispatchBatchSize,
+		RetryReenqueueDelay:          retryReenqueueDelay,
+		ProcessingVisibilityTimeout:  processingVisibilityTimeout,
+		ProcessingRecoveryInterval:   processingRecoveryInterval,
+		ProcessingRecoveryBatchSize:  processingRecoveryBatchSize,
+		ProcessingRecoveryRetryDelay: processingRecoveryRetryDelay,
+		ShutdownTimeout:              shutdownTimeout,
+		ProcessorFailJobID:           getEnv("PROCESSOR_FAIL_JOB_ID", ""),
+		LogLevel:                     getEnv("LOG_LEVEL", "info"),
 	}, nil
 }
 
