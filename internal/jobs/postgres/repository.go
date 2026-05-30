@@ -280,6 +280,96 @@ func (r *Repository) RescheduleRetry(ctx context.Context, id uuid.UUID, delay ti
 	return true, nil
 }
 
+func (r *Repository) RecoverStaleProcessing(ctx context.Context, now time.Time, visibilityTimeout time.Duration, retryDelay time.Duration, limit int) ([]jobs.RecoveryTransitionResult, error) {
+	if visibilityTimeout <= 0 {
+		return nil, errors.New("visibilityTimeout must be greater than zero")
+	}
+	if retryDelay <= 0 {
+		return nil, errors.New("retryDelay must be greater than zero")
+	}
+	if limit <= 0 {
+		return nil, errors.New("limit must be greater than zero")
+	}
+
+	const recoveryErr = "processing visibility timeout expired"
+	const query = `
+		WITH stale AS (
+			SELECT id
+			FROM jobs
+			WHERE status = $1
+				AND started_at IS NOT NULL
+				AND started_at <= $2 - make_interval(secs => $3)
+			ORDER BY started_at
+			FOR UPDATE SKIP LOCKED
+			LIMIT $4
+		)
+		UPDATE jobs
+		SET status = CASE
+				WHEN attempt >= max_attempts THEN $5
+				ELSE $6
+			END,
+			error = $7,
+			next_run_at = CASE
+				WHEN attempt >= max_attempts THEN NULL
+				ELSE $2 + make_interval(secs => $8)
+			END,
+			completed_at = CASE
+				WHEN attempt >= max_attempts THEN $2
+				ELSE NULL
+			END,
+			updated_at = $2
+		FROM stale
+		WHERE jobs.id = stale.id
+			AND jobs.status = $1
+		RETURNING jobs.id, jobs.attempt, jobs.max_attempts, jobs.status, jobs.next_run_at
+	`
+
+	rows, err := r.db.QueryContext(
+		ctx,
+		query,
+		jobs.StatusProcessing,
+		now,
+		visibilityTimeout.Seconds(),
+		limit,
+		jobs.StatusFailed,
+		jobs.StatusPending,
+		recoveryErr,
+		retryDelay.Seconds(),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []jobs.RecoveryTransitionResult
+	for rows.Next() {
+		var (
+			result    jobs.RecoveryTransitionResult
+			status    string
+			nextRunAt sql.NullTime
+		)
+		if err := rows.Scan(&result.ID, &result.Attempt, &result.MaxAttempts, &status, &nextRunAt); err != nil {
+			return nil, err
+		}
+		if status == string(jobs.StatusPending) {
+			result.Decision = jobs.RecoveryDecisionRetry
+			if nextRunAt.Valid {
+				t := nextRunAt.Time
+				result.NextRunAt = &t
+			}
+		} else {
+			result.Decision = jobs.RecoveryDecisionTerminal
+		}
+		results = append(results, result)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return results, nil
+}
+
 func rowsAffected(res sql.Result) (bool, error) {
 	affected, err := res.RowsAffected()
 	if err != nil {

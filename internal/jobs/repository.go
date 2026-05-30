@@ -22,6 +22,7 @@ type Repository interface {
 	HandleProcessingFailure(ctx context.Context, id uuid.UUID, errMsg string, retryDelay time.Duration) (FailureTransitionResult, error)
 	ClaimDueRetries(ctx context.Context, now time.Time, limit int) ([]uuid.UUID, error)
 	RescheduleRetry(ctx context.Context, id uuid.UUID, delay time.Duration) (bool, error)
+	RecoverStaleProcessing(ctx context.Context, now time.Time, visibilityTimeout time.Duration, retryDelay time.Duration, limit int) ([]RecoveryTransitionResult, error)
 }
 
 type FailureDecision string
@@ -34,6 +35,21 @@ const (
 type FailureTransitionResult struct {
 	Applied     bool
 	Decision    FailureDecision
+	Attempt     int
+	MaxAttempts int
+	NextRunAt   *time.Time
+}
+
+type RecoveryDecision string
+
+const (
+	RecoveryDecisionRetry    RecoveryDecision = "retry"
+	RecoveryDecisionTerminal RecoveryDecision = "terminal_failed"
+)
+
+type RecoveryTransitionResult struct {
+	ID          uuid.UUID
+	Decision    RecoveryDecision
 	Attempt     int
 	MaxAttempts int
 	NextRunAt   *time.Time
