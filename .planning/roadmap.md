@@ -1,9 +1,9 @@
 # Roadmap
 
 ## Current Snapshot
-- Current phase: `03-concurrency-and-worker-safety`
+- Current phase: `04-visibility-timeout-and-recovery`
 - Status: done (implementation, docs, and UAT evidence complete)
-- Next phase: `04-visibility-timeout-and-recovery`
+- Next phase: `05-observability-and-ops`
 
 ## Phase Map
 1. `01-mvp-job-submission`
@@ -20,7 +20,7 @@ Status: done.
 
 4. `04-visibility-timeout-and-recovery`
 Goal: recover jobs stuck in `processing` after crashes/timeouts.
-Status: planned.
+Status: done.
 
 5. `05-observability-and-ops`
 Goal: improve structured logs, metrics-ready signals, and operational debugging workflows.

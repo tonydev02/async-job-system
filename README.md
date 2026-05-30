@@ -9,6 +9,7 @@ Core goals:
 - bounded retries and terminal failure handling
 - worker reliability under duplicate delivery
 - bounded worker concurrency and graceful shutdown behavior
+- visibility-timeout recovery for stuck processing jobs
 - operationally useful logs and testable design
 
 ## What This Project Focuses On
@@ -36,6 +37,10 @@ Retry Dispatcher Loop (in worker runtime)
        -> Postgres ClaimDueRetries(next_run_at <= now)
        -> Redis re-enqueue
        -> on enqueue failure: Postgres RescheduleRetry
+
+Processing Recovery Loop (in worker runtime)
+       -> Postgres RecoverStaleProcessing(started_at older than timeout)
+       -> Postgres (processing -> pending with next_run_at) OR (processing -> failed)
 ```
 
 ### Design Rules
@@ -62,6 +67,13 @@ Failure transition from `processing` is atomic:
 
 Due retries are claimed with `FOR UPDATE SKIP LOCKED` semantics in the repository layer to support concurrent workers safely.
 
+Stale `processing` recovery is also claimed with `FOR UPDATE SKIP LOCKED`. Jobs older than `PROCESSING_VISIBILITY_TIMEOUT` are recovered using bounded-attempt semantics:
+
+- if `attempt < max_attempts`: transition to `pending`, set `next_run_at`
+- else: transition to terminal `failed`, set `completed_at`
+
+Recovery does not increment `attempt`; attempts are counted when a job is claimed with `pending -> processing`.
+
 ## Worker Concurrency And Shutdown
 
 `WORKER_CONCURRENCY` controls how many jobs one worker process can process at the same time.
@@ -81,7 +93,7 @@ Shutdown is drain-oriented:
 
 ## Current Phase Status
 
-Phase 03 (Concurrency and Worker Safety) is complete.
+Phase 04 (Visibility Timeout and Recovery) is complete.
 
 Implemented:
 
@@ -101,10 +113,18 @@ Implemented:
 - graceful shutdown drain bounded by `WORKER_SHUTDOWN_TIMEOUT`
 - duplicate-delivery and concurrent repository transition safety tests
 - worker logs with `job_id`, `worker_slot`, and transition outcome fields
+- visibility-timeout recovery for stuck `processing` jobs:
+  - `PROCESSING_VISIBILITY_TIMEOUT`
+  - `PROCESSING_RECOVERY_INTERVAL`
+  - `PROCESSING_RECOVERY_BATCH_SIZE`
+  - `PROCESSING_RECOVERY_RETRY_DELAY`
+- worker-owned recovery scanner started from `Worker.Run`
+- recovery transition logging with `job_id`, decision, attempts, timeout, and outcome
+- concurrent stale-processing recovery tests
 
 Next:
 
-- Phase 04: visibility timeout and recovery for jobs stuck in `processing` after crashes/timeouts.
+- Phase 05: observability and ops improvements.
 
 ## Project Structure
 
@@ -148,6 +168,10 @@ export REDIS_QUEUE_KEY='jobs:queue'
 export REDIS_BLOCK_TIMEOUT='3s'
 export WORKER_CONCURRENCY='4'
 export WORKER_SHUTDOWN_TIMEOUT='10s'
+export PROCESSING_VISIBILITY_TIMEOUT='5m'
+export PROCESSING_RECOVERY_INTERVAL='1m'
+export PROCESSING_RECOVERY_BATCH_SIZE='10'
+export PROCESSING_RECOVERY_RETRY_DELAY='30s'
 export LOG_LEVEL='info'
 
 go run ./cmd/worker
@@ -197,12 +221,18 @@ Worker tests include dispatcher coverage:
 - duplicate-delivery contention
 - graceful shutdown drain and timeout behavior
 - transition logging fields for claim win/skip paths
+- processing recovery startup scan and interval scan
+- recovery error logging
+- recovery decision logging fields
 
 Repository tests include contention coverage:
 
 - concurrent `MarkProcessing` single-winner behavior
 - concurrent terminal transition attempts applying at most once
 - concurrent `ClaimDueRetries` callers avoiding duplicate claimed job IDs
+- retryable and terminal stale-processing recovery
+- fresh/non-processing recovery exclusion
+- concurrent stale-processing recovery callers avoiding duplicate recovered job IDs
 
 ## Notes
 
@@ -214,3 +244,7 @@ Repository tests include contention coverage:
   - `RETRY_DISPATCH_INTERVAL`
   - `RETRY_DISPATCH_BATCH_SIZE`
   - `RETRY_REENQUEUE_DELAY`
+  - `PROCESSING_VISIBILITY_TIMEOUT`
+  - `PROCESSING_RECOVERY_INTERVAL`
+  - `PROCESSING_RECOVERY_BATCH_SIZE`
+  - `PROCESSING_RECOVERY_RETRY_DELAY`
