@@ -1,9 +1,9 @@
 # Roadmap
 
 ## Current Snapshot
-- Current phase: `04-visibility-timeout-and-recovery`
-- Status: done (implementation, docs, and UAT evidence complete)
-- Next phase: `05-observability-and-ops`
+- Current phase: `05-observability-and-ops`
+- Status: planning complete; implementation not started
+- Next phase: `06-dashboard-or-admin-api`
 
 ## Phase Map
 1. `01-mvp-job-submission`
@@ -24,7 +24,7 @@ Status: done.
 
 5. `05-observability-and-ops`
 Goal: improve structured logs, metrics-ready signals, and operational debugging workflows.
-Status: planned.
+Status: active (planning complete).
 
 6. `06-dashboard-or-admin-api`
 Goal: add operator controls/inspection only after backend lifecycle reliability is solid.

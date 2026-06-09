@@ -4,20 +4,21 @@
 Async Job Processing System
 
 ## Current phase
-04 - Visibility Timeout and Recovery
+05 - Observability and Ops
 
 ## Current status
-Phase 04 implementation and documentation are complete; stale `processing` recovery, worker-owned recovery scanning, runtime configuration, concurrency-safe repository recovery, and UAT evidence are captured.
+Phase 05 planning is complete and implementation has not started. Scope, design decisions, implementation slices, acceptance criteria, and UAT requirements are captured.
 
 ## Objective
-Recover jobs stuck in `processing` after crashes, forced shutdowns, or lost worker execution paths while preserving explicit DB-backed lifecycle transitions.
+Make the API and worker operationally inspectable through consistent structured logs, bounded-cardinality metrics, health/readiness endpoints, and documented debugging workflows.
 
 ## Non-goals for current phase
+- distributed tracing or OpenTelemetry export
+- Prometheus/Grafana/alerting infrastructure deployment
+- per-job metric labels
+- profiling endpoints
 - dead-letter queue behavior
-- exponential backoff/jitter policy updates
-- HTTP API contract expansion
-- separate operator/admin recovery command
-- frontend/admin UI
+- operator mutation endpoints or admin UI
 
 ## Done
 - Phase 01 remains complete and validated (baseline API -> Postgres -> Redis -> worker flow)
@@ -58,10 +59,26 @@ Recover jobs stuck in `processing` after crashes, forced shutdowns, or lost work
   - config, worker, repository, and HTTP fake tests are updated for the expanded repository contract
   - README documents recovery lifecycle and runtime configuration
   - UAT records passing command validation from 2026-05-30
+- Phase 05 planning artifacts are created and aligned:
+  - `.planning/phases/05-observability-and-ops/PHASE-PLAN.md`
+  - `.planning/phases/05-observability-and-ops/PHASE-RESEARCH.md`
+  - `.planning/phases/05-observability-and-ops/PHASE-SUMMARY.md`
+  - `.planning/phases/05-observability-and-ops/PHASE-UAT.md`
+- Phase 05 scope is defined:
+  - shared JSON structured logging contracts
+  - API request correlation and access logging
+  - bounded-cardinality Prometheus-compatible metrics
+  - API and worker liveness/readiness endpoints
+  - production-style API runtime and graceful shutdown
+  - worker operations HTTP server
+  - operational troubleshooting documentation
 
 ## Next milestone
-begin Phase 05 planning for observability and ops
+implement Phase 05 slice 1: observability contracts and isolated metrics registry
 
 ## Risks / open questions
 - Postgres integration tests require `TEST_DATABASE_URL` for real database execution; without it, package tests skip database-backed cases per existing test behavior
-- dead-letter flow remains deferred, so exhausted timeout recovery currently uses the existing terminal `failed` state
+- exact Prometheus client choice remains an implementation decision; use a dependency only if it reduces correctness risk
+- exact API/operations HTTP defaults must be finalized with config tests and README updates
+- readiness dependency checks need short timeouts and must not create avoidable load
+- dead-letter flow remains deferred, so terminal outcomes continue to use the existing `failed` state
